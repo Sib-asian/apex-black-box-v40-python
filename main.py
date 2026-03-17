@@ -8,7 +8,12 @@ st.set_page_config(page_title="Apex Black Box v4.0", layout="wide")
 
 
 def _find_free_port(start: int = 5050, end: int = 5100) -> int:
-    """Return the first free TCP port in [start, end), default 5050."""
+    """Return the first free TCP port in [start, end).
+
+    If no port is available in the range, returns ``start`` and lets Flask
+    raise an ``OSError`` on bind — that error is caught in ``_start_flask``
+    and printed to console so the user is informed.
+    """
     for port in range(start, end):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
@@ -16,7 +21,8 @@ def _find_free_port(start: int = 5050, end: int = 5100) -> int:
                 return port
             except OSError:
                 continue
-    return start  # fallback
+    print(f"[apex-api] Warning: no free port found in {start}-{end - 1}; attempting {start} anyway")
+    return start
 
 
 def _start_flask(port: int) -> None:

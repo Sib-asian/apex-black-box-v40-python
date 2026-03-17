@@ -306,7 +306,7 @@ function _setEngineMode(mode) {
 
 function _toggleEngine() {
     if (!_APEX_API_BASE) {
-        alert('Backend Python non disponibile: porta API non configurata.\nRiavvia l\'app Streamlit per abilitare il motore Python.');
+        alert("Backend Python non disponibile: porta API non configurata.\nRiavvia l'app Streamlit per abilitare il motore Python.");
         return;
     }
     _setEngineMode(_apexEngineMode === 'js' ? 'py' : 'js');
