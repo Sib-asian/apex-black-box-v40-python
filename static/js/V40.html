@@ -621,6 +621,32 @@ function getSpread(id) {
 function getRaw(id) { let v=document.getElementById(id).value.replace(',','.'); let n=parseFloat(v); return isNaN(n)?null:n; }
 
 // ════════════════════════════════════════════════════════════════
+//  ANTI-OVERCONFIDENCE HELPERS  [V40 Shrink]
+//  When match data is sparse (early game, few shots/DA, unstable
+//  scans), raw Poisson outputs can be overconfident.  Each
+//  probability is linearly interpolated ("shrunk") toward a neutral
+//  baseline so that picks stay conservative until the model has
+//  enough evidence to justify a strong prediction.
+//  Shrink strength = MAX_SHRINK × (1 − dataQuality), where
+//  MAX_SHRINK = 0.35 (medium).  At full quality, strength → 0 and
+//  outputs are identical to the un-shrunk values.
+// ════════════════════════════════════════════════════════════════
+function clamp01(v) { return isFinite(v) ? Math.max(0, Math.min(1, v)) : 0; }
+function safeNum(v, fallback=0) { return (typeof v==='number' && isFinite(v)) ? v : fallback; }
+function renormalize1X2(p1, pX, p2) {
+    const s = p1 + pX + p2;
+    if (!isFinite(s) || s <= 0) return [1/3, 1/3, 1/3];
+    return [p1/s, pX/s, p2/s];
+}
+function shrinkToBase(p, base, strength) {
+    return clamp01((1 - strength) * clamp01(p) + strength * base);
+}
+function computeDataQuality(dS, tS, stQ, conf) {
+    // Returns quality in [0,1]: 0 = no data, 1 = full reliable data
+    return clamp01(safeNum(dS)*0.45 + safeNum(tS)*0.30 + safeNum(stQ,0.5)*0.15 + safeNum(conf/88)*0.10);
+}
+
+// ════════════════════════════════════════════════════════════════
 //  MATEMATICA CORE
 // ════════════════════════════════════════════════════════════════
 
@@ -1945,18 +1971,45 @@ function runOracleEngine(n, db) {
     const hasData=dataS>0.05;
     const confidence=Math.min(hasData?(dataS*0.50+stabQ*0.20+timeS*0.30)*100:timeS*25, 88);
 
+    // ── Anti-overconfidence shrink + numeric guardrails [V40 Shrink] ──
+    // Compute data quality and derive shrink strength (0 at full quality).
+    const _dq = computeDataQuality(dataS, timeS, stabQ, confidence);
+    const _ss = 0.35 * (1 - _dq);  // max shrink 35% (medium), fades as quality improves
+    // 1X2: shrink toward (1/3, 1/3, 1/3) then renormalize
+    let [_p1, _pX, _p2] = renormalize1X2(
+        shrinkToBase(safeNum(agg.p1, 1/3), 1/3, _ss),
+        shrinkToBase(safeNum(agg.pX, 1/3), 1/3, _ss),
+        shrinkToBase(safeNum(agg.p2, 1/3), 1/3, _ss)
+    );
+    // Over/Under/BTTS: shrink toward 0.50
+    const _pOver25 = shrinkToBase(safeNum(agg.pOver25, 0.5), 0.5, _ss);
+    const _pOver15 = shrinkToBase(safeNum(agg.pOver15, 0.5), 0.5, _ss);
+    const _pOver   = shrinkToBase(safeNum(agg.pOver,   0.5), 0.5, _ss);
+    const _pBTTS   = shrinkToBase(safeNum(pBTTS,       0.5), 0.5, _ss);
+    // Next-goal conditionals: shrink toward 0.50
+    const _nHc = shrinkToBase(safeNum(nextH_cond, 0.5), 0.5, _ss);
+    const _nAc = shrinkToBase(safeNum(nextA_cond, 0.5), 0.5, _ss);
+    // Re-derive DC / DNB from adjusted 1X2 to keep internal coherence
+    const _dc1X  = clamp01(_p1 + _pX);
+    const _dcX2  = clamp01(_pX + _p2);
+    const _dc12  = clamp01(_p1 + _p2);
+    const _sum12 = _p1 + _p2;
+    const _dnbH  = _sum12 > 0 ? clamp01(_p1 / _sum12) : 0.5;
+    const _dnbA  = _sum12 > 0 ? clamp01(_p2 / _sum12) : 0.5;
+    // ─────────────────────────────────────────────────────────────────
+
     return {
         probs:{
-            '1':agg.p1, 'X':agg.pX, '2':agg.p2,
-            DNB_H:agg.pDNB_H, DNB_A:agg.pDNB_A,
-            Over15:agg.pOver15, Under25:1-agg.pOver25,
-            DC_1X:agg.p1X, DC_X2:agg.pX2, DC_12:agg.p12,
+            '1':_p1, 'X':_pX, '2':_p2,
+            DNB_H:_dnbH, DNB_A:_dnbA,
+            Over15:_pOver15, Under25:1-_pOver25,
+            DC_1X:_dc1X, DC_X2:_dcX2, DC_12:_dc12,
             Next_H:nextH_abs, Next_A:nextA_abs,
-            Next_H_c:nextH_cond, Next_A_c:nextA_cond,
-            O_Dyn:agg.pOver, Over25:agg.pOver25, BTTS:pBTTS
+            Next_H_c:_nHc, Next_A_c:_nAc,
+            O_Dyn:_pOver, Over25:_pOver25, BTTS:_pBTTS
         },
         matrix, htProbs, etProbs, dynOver, vix, confidence, alerts, min,
-        confIntervals:(()=>{const unc=Math.max(0.01,(1-confidence/100)*0.45);const ci=(p)=>({lo:+(Math.max(0.01,p-unc*Math.sqrt(p*(1-p))*2)).toFixed(3),hi:+(Math.min(0.99,p+unc*Math.sqrt(p*(1-p))*2)).toFixed(3)});return{p1:ci(agg.p1),pX:ci(agg.pX),p2:ci(agg.p2),pO:ci(agg.pOver)};})(),
+        confIntervals:(()=>{const unc=Math.max(0.01,(1-confidence/100)*0.45);const ci=(p)=>({lo:+(Math.max(0.01,p-unc*Math.sqrt(p*(1-p))*2)).toFixed(3),hi:+(Math.min(0.99,p+unc*Math.sqrt(p*(1-p))*2)).toFixed(3)});return{p1:ci(_p1),pX:ci(_pX),p2:ci(_p2),pO:ci(_pOver)};})(),
         score:`${hg}-${ag}`, currentHg:hg, currentAg:ag, isGarbageTime:isGarbageTime,
         // [V37 P7] Proiezione finale esplicita
         // [V37 P12] Stima gol residui da DB storico (se disponibile)
