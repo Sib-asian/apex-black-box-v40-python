@@ -1,1 +1,33 @@
-from flask import Flask, request, jsonify\nimport json\n\napp = Flask(__name__)\n\n@app.route('/api/scan', methods=['POST'])\ndef scan():\n    data = request.json\n    # Extract inputs from the JSON payload\n    inputs = {\n        'minute': data.get('minute'),\n        'goals': data.get('goals'),\n        'shots': data.get('shots'),\n        'corners': data.get('corners'),\n        'dangerous_attacks': data.get('dangerous_attacks'),\n        'possession': data.get('possession'),\n        'red_cards': data.get('red_cards'),\n        'spreads_totals': data.get('spreads_totals')\n    }\n    \n    # Here we would call the engine function (this is a placeholder)\n    # probabilities = apex_black_box.engine_v40.compute_probabilities(inputs)\n    probabilities = {'sample_probability': 0.5} # Sample response for demonstration\n    \n    return jsonify(probabilities)\n\nif __name__ == '__main__':\n    app.run(host='0.0.0.0', port=8502)
+"""
+Flask API – exposes the Oracle Engine as a local HTTP endpoint.
+
+POST /api/scan
+  Body: JSON payload (see apex_black_box/engine.py for field docs)
+  Returns: JSON result from engine.scan()
+
+GET /api/health
+  Returns: {"status": "ok"}
+"""
+
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+
+from apex_black_box import engine
+
+app = Flask(__name__)
+CORS(app)  # allow same-machine requests from the Streamlit iframe
+
+
+@app.route("/api/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/scan", methods=["POST"])
+def scan():
+    payload = request.get_json(force=True, silent=True) or {}
+    try:
+        result = engine.scan(payload)
+        return jsonify(result)
+    except Exception as exc:  # pragma: no cover
+        return jsonify({"error": str(exc)}), 500
