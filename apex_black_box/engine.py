@@ -11,6 +11,7 @@ static/js/V40.html (V40 with V40-Shrink anti-overconfidence patch).
 from __future__ import annotations
 import math
 import random
+import threading
 from typing import Any
 
 # ─────────────────────────────────────────────────────────────────
@@ -20,8 +21,13 @@ MEAN_GOALS_PER_MIN: float = 1.35 / 90
 DC_RHO: float = -0.10
 RHYTHM_NORM: float = (15 * 0.80 + 15 * 0.90 + 35 * 0.95 + 15 * 1.10 + 10 * 1.30) / 90
 
+# B1: Cumulative multiplier guard bounds (vs post-blend base_lambda)
+MULT_GUARD_MAX: float = 1.80  # total modifiers may not exceed ×1.80
+MULT_GUARD_MIN: float = 0.35  # total modifiers may not fall below ×0.35
+
 # log-factorial cache (up to 20)
 _LFC: list[float] = [0.0]
+_LFC_LOCK = threading.Lock()  # F5: thread-safe cache
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -86,9 +92,10 @@ def rhythm_curve(m: float) -> float:
 
 def log_fact(n: int) -> float:
     n = min(n, 20)
-    while len(_LFC) <= n:
-        _LFC.append(math.log(len(_LFC)) + _LFC[-1])
-    return _LFC[n]
+    with _LFC_LOCK:
+        while len(_LFC) <= n:
+            _LFC.append(math.log(len(_LFC)) + _LFC[-1])
+        return _LFC[n]
 
 
 def poisson_pmf(lam: float, k: int) -> float:
@@ -97,23 +104,49 @@ def poisson_pmf(lam: float, k: int) -> float:
     return math.exp(k * math.log(lam) - lam - log_fact(k))
 
 
-def calc_xg_obs(sot: float, mis: float, da: float) -> float:
+def calc_xg_obs(sot: float, mis: float, da: float, min_played: float = 90.0) -> float:
+    """A3: DA contribution weighted by rate per minute (high DA rate = more informative)."""
     total = sot + mis
     da_eff = min(da, 35) + max(0, da - 35) * 0.15
+    # Rate-aware DA quality: 8 DA/90' is considered neutral
+    da_rate = da / max(min_played, 1.0)
+    da_quality = clamp(da_rate / (8.0 / 90.0), 0.5, 1.5)
+    da_eff_weighted = da_eff * da_quality
     if total == 0:
-        return da_eff * 0.003
+        return da_eff_weighted * 0.003
     conv_rate = clamp(sot / total, 0, 1)
-    return sot * (0.10 + conv_rate * 0.04) + mis * (0.02 + conv_rate * 0.02) + da_eff * 0.003
+    return sot * (0.10 + conv_rate * 0.04) + mis * (0.02 + conv_rate * 0.02) + da_eff_weighted * 0.003
 
 
 def pressure_factor(cor: float, sot: float, mis: float, min_played: float) -> float:
+    """A4: Corner pressure factor, conditional on shot quality.
+
+    When shots are low but corners are high, corners are the main source of
+    danger (set pieces) → more aggressive boost.  When shots are already high,
+    xg_rate already captures the threat → lighter boost to avoid double-counting.
+    """
     cor_rate = cor / max(1.0, min_played / 10.0)
-    return clamp(1.0 + cor_rate * 0.015, 1.0, 1.12)
+    ts = sot + mis
+    ts_rate = ts / max(1.0, min_played) * 90.0  # shots per 90'
+    if ts_rate < 6.0:
+        # Low shots: corners are primary danger signal
+        coeff = 0.022
+        cap = 1.15
+    elif ts_rate > 14.0:
+        # High shots: xg_rate already captures threat
+        coeff = 0.008
+        cap = 1.06
+    else:
+        coeff = 0.015
+        cap = 1.12
+    return clamp(1.0 + cor_rate * coeff, 1.0, cap)
 
 
 def dc_correction_adaptive(h: int, a: int, l_h: float, l_a: float, min_: float) -> float:
     dc_scale = clamp(1.0 / (1.0 + max(0, l_h * l_a - 1.0) * 0.35), 0.3, 1.0)
-    time_decay = max(0.05, 1.0 - (min_ or 0) / 90)
+    # F3: floor raised from 0.05 to 0.15 — prevents DC correlation from becoming
+    # negligibly small late in the game, keeping draw probability realistic.
+    time_decay = max(0.15, 1.0 - (min_ or 0) / 90)
     rho = DC_RHO * dc_scale * time_decay
     if h == 0 and a == 0:
         return 1 - l_h * l_a * rho
@@ -156,7 +189,7 @@ def aggregate_from_matrix(matrix: list[dict], hg_now: int, ag_now: int) -> dict:
             p_dnb_a += p
         else:
             px += p
-        if (h + a) >= 2:
+        if (h + a) >= 1:
             p_over += p
         if (fh + fa) > 2.5:
             p_over25 += p
@@ -367,10 +400,12 @@ def scan(payload: dict) -> dict:
 
     # ── xG Rate live ─────────────────────────────────────────────
     ts_h = sot_h + mis_h; ts_a = sot_a + mis_a
-    sample_w_h = clamp(((sot_h + mis_h) + da_h * 0.10) / 12, 0, 1)
-    sample_w_a = clamp(((sot_a + mis_a) + da_a * 0.10) / 12, 0, 1)
-    xg_rate_h = min((calc_xg_obs(sot_h, mis_h, da_h) / safe_min) * sample_w_h + prior_h * (1 - sample_w_h), 3.5 / 90)
-    xg_rate_a = min((calc_xg_obs(sot_a, mis_a, da_a) / safe_min) * sample_w_a + prior_a * (1 - sample_w_a), 3.5 / 90)
+    # F8: DA weight increased to 0.20 (more informative signal)
+    sample_w_h = clamp(((sot_h + mis_h) + da_h * 0.20) / 12, 0, 1)
+    sample_w_a = clamp(((sot_a + mis_a) + da_a * 0.20) / 12, 0, 1)
+    # A3: calc_xg_obs is now rate-aware (DA weighted by rate/minute)
+    xg_rate_h = min((calc_xg_obs(sot_h, mis_h, da_h, safe_min) / safe_min) * sample_w_h + prior_h * (1 - sample_w_h), 3.5 / 90)
+    xg_rate_a = min((calc_xg_obs(sot_a, mis_a, da_a, safe_min) / safe_min) * sample_w_a + prior_a * (1 - sample_w_a), 3.5 / 90)
     xg_rate_h *= pressure_factor(cor_h, sot_h, mis_h, safe_min)
     xg_rate_a *= pressure_factor(cor_a, sot_a, mis_a, safe_min)
 
@@ -410,10 +445,18 @@ def scan(payload: dict) -> dict:
             pace_a /= m_samples
 
         if len(filtered) >= 3:
-            rates_h = [{"m": h.get("min", 0), "r": float(h.get("xgRateH", 0) or 0) or float(h.get("xgObsH", 0) or 0) / max(1, h.get("min", 1))} for h in filtered]
-            rates_a = [{"m": h.get("min", 0), "r": float(h.get("xgRateA", 0) or 0) or float(h.get("xgObsA", 0) or 0) / max(1, h.get("min", 1))} for h in filtered]
-            rates_h = [d for d in rates_h if d["r"] > 0 and d["m"] > 0]
-            rates_a = [d for d in rates_a if d["r"] > 0 and d["m"] > 0]
+            # B2: consistent fallback — only use xgRateH/xgRateA (blend with prior);
+            # do NOT mix in xgObsH/min which is raw-observed and has a different scale
+            rates_h = [
+                {"m": h.get("min", 0), "r": float(h.get("xgRateH", 0) or 0)}
+                for h in filtered
+                if float(h.get("xgRateH", 0) or 0) > 0 and h.get("min", 0) > 0
+            ]
+            rates_a = [
+                {"m": h.get("min", 0), "r": float(h.get("xgRateA", 0) or 0)}
+                for h in filtered
+                if float(h.get("xgRateA", 0) or 0) > 0 and h.get("min", 0) > 0
+            ]
 
             def lin_slope(pts: list[dict]) -> float:
                 n = len(pts)
@@ -448,9 +491,14 @@ def scan(payload: dict) -> dict:
     h_xg_pre = max(0.15, (t_c_adj - s_c) / 2) * steam["lambdaMod"]["h"]
     a_xg_pre = max(0.15, (t_c_adj + s_c) / 2) * steam["lambdaMod"]["a"]
 
-    # ── Blend sigmoid ─────────────────────────────────────────────
-    w_h = max(sigmoid_weight(minute), sample_w_h)
-    w_a = max(sigmoid_weight(minute), sample_w_a)
+    # A2: sigmoid_weight data-quality aware — scale towards sample_w when data is sparse
+    # w_effective = sigmoid * clamp(sw/0.15,0,1) + sw * (1 - clamp(sw/0.15,0,1))
+    sw_scale_h = clamp(sample_w_h / 0.15, 0.0, 1.0)
+    sw_scale_a = clamp(sample_w_a / 0.15, 0.0, 1.0)
+    sig_h = sigmoid_weight(minute)
+    sig_a = sigmoid_weight(minute)
+    w_h = sig_h * sw_scale_h + sample_w_h * (1.0 - sw_scale_h)
+    w_a = sig_a * sw_scale_a + sample_w_a * (1.0 - sw_scale_a)
     lambda_h = clamp(h_xg_pre * (1 - w_h) + xg_rate_h * 90 * w_h, 0.10, 3.5)
     lambda_a = clamp(a_xg_pre * (1 - w_a) + xg_rate_a * 90 * w_a, 0.10, 3.5)
     lambda_h = clamp(lambda_h * poss_mod_h, 0.10, 3.5)
@@ -582,7 +630,8 @@ def scan(payload: dict) -> dict:
                     lambda_h *= ko_boost
                     alerts.append({"type": "chaos", "msg": f"La casa è sotto di {abs(goal_diff)} gol — deve attaccare per forza, aspettati più ritmo."})
             else:
-                chasing_mult = clamp(1.10 + 0.12 * (minute / 90), 1.10, 1.22)
+                # B3: chasing_mult scales inversely with goal_diff — large deficit = less realistic comeback
+                chasing_mult = clamp(1.10 + 0.12 * (minute / 90) - 0.04 * (abs(goal_diff) - 1), 1.02, 1.22)
                 if goal_diff > 0:
                     lambda_a *= chasing_mult
                 elif goal_diff < 0:
@@ -624,6 +673,23 @@ def scan(payload: dict) -> dict:
     lambda_a = clamp(lambda_a, 0.05, 3.5)
     lambda_h = clamp(lambda_h * pos_q_h, 0.05, 3.5)
     lambda_a = clamp(lambda_a * pos_q_a, 0.05, 3.5)
+    # B1: Final cumulative multiplier guard — prevents cascade of modifiers from
+    # exploding (>×MULT_GUARD_MAX) or collapsing (<×MULT_GUARD_MIN) relative to
+    # the post-blend base lambda.
+    if base_lambda_h > 0:
+        mult_total_h = lambda_h / base_lambda_h
+        if mult_total_h > MULT_GUARD_MAX:
+            lambda_h = base_lambda_h * MULT_GUARD_MAX
+        elif mult_total_h < MULT_GUARD_MIN:
+            lambda_h = base_lambda_h * MULT_GUARD_MIN
+    if base_lambda_a > 0:
+        mult_total_a = lambda_a / base_lambda_a
+        if mult_total_a > MULT_GUARD_MAX:
+            lambda_a = base_lambda_a * MULT_GUARD_MAX
+        elif mult_total_a < MULT_GUARD_MIN:
+            lambda_a = base_lambda_a * MULT_GUARD_MIN
+    lambda_h = clamp(lambda_h, 0.05, 3.5)
+    lambda_a = clamp(lambda_a, 0.05, 3.5)
 
     # ── Proiezione gol rimanenti ──────────────────────────────────
     max_time = 90 + rec
@@ -652,7 +718,11 @@ def scan(payload: dict) -> dict:
     next_h_abs = next_h_cond * p_goal
     next_a_abs = next_a_cond * p_goal
 
-    dyn_over = hg + ag + 1.5
+    # A6: dyn_over is the next commercial half-point above the current score total.
+    # Goals are integers, so ceil(hg+ag) = hg+ag, giving hg+ag+0.5 always.
+    # This ensures dyn_over ∈ {0.5, 1.5, 2.5, 3.5, 4.5, ...} and P(O_Dyn)
+    # is always the probability of at least 1 more goal (a tradable market).
+    dyn_over = float(hg + ag) + 0.5
     p_btts = agg["pBTTS"]
 
     # ── Extra time ───────────────────────────────────────────────
@@ -664,8 +734,11 @@ def scan(payload: dict) -> dict:
     # ── Analisi primo tempo ───────────────────────────────────────
     ht_probs = None
     if minute <= 45:
-        l_ht_h = clamp(h_xg_pre * 0.60 + xg_rate_h * 90 * 0.40, 0.10, 3.5)
-        l_ht_a = clamp(a_xg_pre * 0.60 + xg_rate_a * 90 * 0.40, 0.10, 3.5)
+        # C3: dynamic blend — live weight scales with minute (0.10 at kick-off → 0.50 at min≥35)
+        ht_live_w = clamp(minute / 35.0, 0.10, 0.50)
+        ht_pre_w = 1.0 - ht_live_w
+        l_ht_h = clamp(h_xg_pre * ht_pre_w + xg_rate_h * 90 * ht_live_w, 0.10, 3.5)
+        l_ht_a = clamp(a_xg_pre * ht_pre_w + xg_rate_a * 90 * ht_live_w, 0.10, 3.5)
         rem_ht = max(1, 45 + rec - minute)
         ht_proj_h = ht_proj_a = 0.0
         for m_off in range(int(rem_ht)):
@@ -684,7 +757,9 @@ def scan(payload: dict) -> dict:
     vix_shot_s_proxy = clamp((ts_h + ts_a) / 26, 0, 1)
     vix_da_s_proxy = clamp((da_h + da_a) / 60, 0, 1)
     vix_data_proxy = vix_shot_s_proxy * 0.80 + vix_da_s_proxy * 0.20
-    vix_conf_scale = clamp(max(vix_data_proxy, clamp(minute / 75, 0, 1) * 0.5) / 0.6, 0.3, 1.5)
+    # C4: vix_conf_scale — cap at 1.20 (not 1.5), upward-only adjustment (never
+    # reduces below 1.0) to avoid artificially deflating VIX in real-intensity matches.
+    vix_conf_scale = clamp(max(vix_data_proxy, clamp(minute / 75, 0, 1) * 0.5) / 0.6, 1.0, 1.20)
     vix = clamp(vix_raw * vix_conf_scale, 10, 95)
     vix_h = clamp(xg_rate_h / MEAN_GOALS_PER_MIN * 50, 10, 95)
     vix_a = clamp(xg_rate_a / MEAN_GOALS_PER_MIN * 50, 10, 95)
@@ -700,10 +775,14 @@ def scan(payload: dict) -> dict:
     l_a_pre_full = max(0.15, (t_c + s_c) / 2)
     elapsed = clamp(minute / 90, 0.05, 1)
     p_score_prematch = poisson_pmf(l_h_pre_full * elapsed, int(hg)) * poisson_pmf(l_a_pre_full * elapsed, int(ag))
-    p_00_prematch = poisson_pmf(l_h_pre_full * elapsed, 0) * poisson_pmf(l_a_pre_full * elapsed, 0)
+    # C1: surprise_idx vs modal result — compare current score to the most probable
+    # pre-match scoreline (mode of the Poisson distribution), not to 0-0.
+    modal_h = max(0, math.floor(l_h_pre_full * elapsed))
+    modal_a = max(0, math.floor(l_a_pre_full * elapsed))
+    p_modal = poisson_pmf(l_h_pre_full * elapsed, modal_h) * poisson_pmf(l_a_pre_full * elapsed, modal_a)
     surprise_raw = (
-        clamp(-math.log2(p_score_prematch / p_00_prematch), 0, 10)
-        if p_score_prematch > 0 and p_00_prematch > 0.001 else 0.0
+        clamp(-math.log2(p_score_prematch / p_modal), 0, 10)
+        if p_score_prematch > 0 and p_modal > 0.001 else 0.0
     )
     surprise_damp = clamp(minute / 25, 0, 1)
     surprise_idx = surprise_raw * surprise_damp
@@ -733,12 +812,49 @@ def scan(payload: dict) -> dict:
     time_s = clamp(minute / 75, 0, 1)
 
     stab_q = 0.50
+    # A1: stab_q improved — use up to 5 scans and 4 markets; apply rolling variance
+    # to measure systematic instability; attenuate penalty when a goal was scored
+    # between scans (justified variance) to avoid false instability penalties.
+    _STAB_MARKETS = ("1", "X", "2", "Over25", "O_Dyn")
     if len(prev_scans) >= 2:
-        la = prev_scans[0].get("probs") if isinstance(prev_scans[0], dict) else None
-        pr = prev_scans[1].get("probs") if isinstance(prev_scans[1], dict) else None
-        if la and pr:
-            d = abs(float(la.get("1", 0)) - float(pr.get("1", 0))) + abs(float(la.get("O_Dyn", 0)) - float(pr.get("O_Dyn", 0)))
-            stab_q = clamp(1.0 - d * 3.0, 0.20, 0.90)
+        scan_probs = []
+        for sc in prev_scans[:5]:  # up to 5 most-recent scans
+            if isinstance(sc, dict):
+                p = sc.get("probs")
+                if isinstance(p, dict):
+                    scan_probs.append(p)
+        if len(scan_probs) >= 2:
+            # Detect goal spike between scans (score change justifies variance)
+            def _is_goal_spike(s_a: dict, s_b: dict) -> bool:
+                sc_a = s_a.get("score", "0-0"); sc_b = s_b.get("score", "0-0")
+                try:
+                    home_a, away_a = (int(x) for x in sc_a.split("-"))
+                    home_b, away_b = (int(x) for x in sc_b.split("-"))
+                    return (home_a + away_a) != (home_b + away_b)
+                except Exception:
+                    return False
+            # Collect per-market variances across consecutive scan pairs
+            market_variances: list[float] = []
+            for mk in _STAB_MARKETS:
+                vals = [float(p.get(mk, 0) or 0) for p in scan_probs]
+                if len(vals) < 2:
+                    continue
+                mean_v = sum(vals) / len(vals)
+                var_v = sum((v - mean_v) ** 2 for v in vals) / len(vals)
+                market_variances.append(var_v)
+            if market_variances:
+                avg_var = sum(market_variances) / len(market_variances)
+                # Penalise only systematic instability (variance > 0.002 threshold)
+                instability = clamp((avg_var - 0.002) / 0.03, 0.0, 1.0)
+                # Attenuate penalty if a goal was scored between any consecutive scans
+                goal_spike = any(
+                    _is_goal_spike(prev_scans[i], prev_scans[i + 1])
+                    for i in range(min(len(prev_scans) - 1, 4))
+                    if isinstance(prev_scans[i], dict) and isinstance(prev_scans[i + 1], dict)
+                )
+                if goal_spike:
+                    instability *= 0.50  # halve penalty when variance is goal-driven
+                stab_q = clamp(1.0 - instability * 0.70, 0.20, 0.90)
 
     has_data = data_s > 0.05
     confidence = min(
@@ -754,10 +870,13 @@ def scan(payload: dict) -> dict:
         shrink_to_base(safe_num(agg["pX"], 1 / 3), 1 / 3, ss),
         shrink_to_base(safe_num(agg["p2"], 1 / 3), 1 / 3, ss),
     )
-    p_over25 = shrink_to_base(safe_num(agg["pOver25"], 0.5), 0.5, ss)
-    p_over15 = shrink_to_base(safe_num(agg["pOver15"], 0.5), 0.5, ss)
-    p_over   = shrink_to_base(safe_num(agg["pOver"],   0.5), 0.5, ss)
-    p_btts   = shrink_to_base(safe_num(p_btts,         0.5), 0.5, ss)
+    # A5: market-specific neutral bases for shrink.
+    # Over 1.5 ≈ 0.72, Over 2.5 ≈ 0.52, BTTS ≈ 0.51 (not 0.50 flat for all).
+    # Using 0.50 for Over 1.5 was a systematic anti-over bias when data is sparse.
+    p_over25 = shrink_to_base(safe_num(agg["pOver25"], 0.52), 0.52, ss)
+    p_over15 = shrink_to_base(safe_num(agg["pOver15"], 0.72), 0.72, ss)
+    p_over   = shrink_to_base(safe_num(agg["pOver"],   0.52), 0.52, ss)
+    p_btts   = shrink_to_base(safe_num(p_btts,         0.51), 0.51, ss)
     n_hc = shrink_to_base(safe_num(next_h_cond, 0.5), 0.5, ss)
     n_ac = shrink_to_base(safe_num(next_a_cond, 0.5), 0.5, ss)
     dc_1x = clamp01(p1 + px)
@@ -767,15 +886,22 @@ def scan(payload: dict) -> dict:
     dnb_h  = clamp01(p1 / sum12) if sum12 > 0 else 0.5
     dnb_a  = clamp01(p2 / sum12) if sum12 > 0 else 0.5
 
-    # ── Confidence intervals ──────────────────────────────────────
+    # ── Confidence intervals (C2: Wilson CI, asymmetric, correct at extremes) ───
     unc = max(0.01, (1 - confidence / 100) * 0.45)
+    # n_eff: effective sample size derived from confidence (e.g., conf=50 → n_eff=25)
+    n_eff = max(5.0, confidence * 0.5)
 
     def ci(p: float) -> dict:
-        import math as _m
-        spread = unc * _m.sqrt(max(0, p * (1 - p))) * 2
+        """Wilson score interval (95%) — handles p near 0 or 1 correctly."""
+        _z = 1.96
+        _denom = 1.0 + _z * _z / n_eff
+        _center = (p + _z * _z / (2.0 * n_eff)) / _denom
+        _half = (_z / _denom) * math.sqrt(
+            max(0.0, p * (1.0 - p) / n_eff + _z * _z / (4.0 * n_eff * n_eff))
+        )
         return {
-            "lo": round(max(0.01, p - spread), 3),
-            "hi": round(min(0.99, p + spread), 3),
+            "lo": round(max(0.01, _center - _half), 3),
+            "hi": round(min(0.99, _center + _half), 3),
         }
 
     # ── Projected final ───────────────────────────────────────────
@@ -801,6 +927,29 @@ def scan(payload: dict) -> dict:
         "pH": round(p_fin_h, 2),
         "pA": round(p_fin_a, 2),
     }
+
+    # ── D3: Model edge vs book fair odds ─────────────────────────
+    # Optional: if payload contains bookOdds dict and vig, compute model_edge per market.
+    # Non-breaking: omitted from output when bookOdds not provided.
+    book_odds_raw = payload.get("bookOdds") or {}
+    vig_pct = float(payload.get("vig", 0.05) or 0.05)
+    _market_probs = {
+        "1": p1, "X": px, "2": p2,
+        "Over25": p_over25, "Over15": p_over15, "BTTS": p_btts,
+        "O_Dyn": p_over,
+    }
+    model_edge: dict = {}
+    if book_odds_raw:
+        for mkt, q_raw in book_odds_raw.items():
+            try:
+                q = float(q_raw)
+                if q > 1.0 and mkt in _market_probs:
+                    # Fair probability removes vig from raw implied
+                    p_book_fair = (1.0 / q) / (1.0 + vig_pct)
+                    p_model = _market_probs[mkt]
+                    model_edge[mkt] = round(p_model - p_book_fair, 4)
+            except (TypeError, ValueError):
+                pass
 
     # ── Result ────────────────────────────────────────────────────
     return {
@@ -855,6 +1004,7 @@ def scan(payload: dict) -> dict:
             "lA_live": round(lambda_a, 3),
             "projH": round(proj_h, 3),
             "projA": round(proj_a, 3),
+            "modelEdge": model_edge if model_edge else None,
         },
         "raw": {
             "min": int(minute), "hg": int(hg), "ag": int(ag),
