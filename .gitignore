@@ -1,0 +1,34 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# C extension files
+*.so
+
+# Distribution / packaging
+.Python
+env/
+env.bak/
+venv/
+ENV/
+.env/
+*.egg-info/
+*.egg
+/dist/
+/build/
+
+# Backup files
+*~
+*.bak
+*.swp
+
+# Test files
+.coverage
+*.cover
+.testdata/
+
+# IDE settings
+.idea/
+.vscode/
