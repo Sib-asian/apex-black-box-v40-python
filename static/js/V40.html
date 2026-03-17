@@ -166,6 +166,10 @@
 <div class="container">
     <h1>V40</h1>
     <div class="subtitle">Analisi live per scommesse sportive · V40</div>
+    <!-- Engine fallback notification (shown briefly on API error) -->
+    <div id="_apexFallbackNote" style="display:none;background:rgba(255,183,0,0.08);border:1px solid rgba(255,183,0,0.3);color:var(--gold);font-size:0.7em;padding:4px 10px;border-radius:3px;text-align:center;margin-bottom:4px">
+        ⚠️ Backend Python non raggiungibile — calcolo eseguito con motore JS
+    </div>
 
     <div class="memory-bar">
         <select id="savedMatches" onchange="loadSelectedMatch()"><option value="">-- Nuova Partita --</option></select>
@@ -243,7 +247,7 @@
         </div>
     </div>
 
-    <div style="display:flex;gap:6px"><button class="btn-scan" id="btnScan" style="flex:1" onclick="runOracleScanner()">🔮 ESEGUI V40 SCAN</button><button class="btn-exp" style="width:auto;padding:0 16px;font-size:1.1em" onclick="clearLiveFields()" title="Azzera campi live">🔄</button></div>
+    <div style="display:flex;gap:6px"><button class="btn-scan" id="btnScan" style="flex:1" onclick="runOracleScanner()">🔮 ESEGUI V40 SCAN</button><button class="btn-exp" style="width:auto;padding:0 16px;font-size:1.1em" onclick="clearLiveFields()" title="Azzera campi live">🔄</button><button id="btnEngineToggle" onclick="_toggleEngine()" title="Alterna motore di calcolo JS (default) ↔ Python" style="background:transparent;border:1px solid var(--text-muted);color:var(--text-muted);padding:0 12px;cursor:pointer;font-family:monospace;font-size:0.75em;font-weight:bold;white-space:nowrap;transition:0.2s">⚙️ Engine: JS</button></div>
 
     <!-- [UPGRADE V25] Quote bookie per edge check in tempo reale nell'Oracle Verdict -->
     <div class="section-title" style="color:var(--kelly-blue)">3. Quote bookie (opzionale) <span style="color:#444;font-size:0.85em">(opzionale)</span></div>
@@ -272,6 +276,94 @@
 </div>
 
 <script>
+
+// ════════════════════════════════════════════════════════════════
+//  PYTHON ENGINE API  [backend]
+//  Port is injected by Streamlit at startup (replaces placeholder).
+//  Default JS engine is always used when toggle is OFF or API fails.
+// ════════════════════════════════════════════════════════════════
+const _APEX_API_PORT = '__APEX_API_PORT__';  // replaced at runtime by Streamlit
+const _APEX_API_BASE = (_APEX_API_PORT && _APEX_API_PORT !== '__APEX_API_PORT__')
+    ? `http://127.0.0.1:${_APEX_API_PORT}` : null;
+
+// Engine mode: 'js' (default) or 'py'
+let _apexEngineMode = 'js';
+
+function _setEngineMode(mode) {
+    _apexEngineMode = mode;
+    const btn = document.getElementById('btnEngineToggle');
+    if (!btn) return;
+    if (mode === 'py') {
+        btn.textContent = '⚙️ Engine: PY';
+        btn.style.borderColor = 'var(--accent)';
+        btn.style.color = 'var(--accent)';
+    } else {
+        btn.textContent = '⚙️ Engine: JS';
+        btn.style.borderColor = 'var(--text-muted)';
+        btn.style.color = 'var(--text-muted)';
+    }
+}
+
+function _toggleEngine() {
+    if (!_APEX_API_BASE) {
+        alert('Backend Python non disponibile: porta API non configurata.\nRiavvia l\'app Streamlit per abilitare il motore Python.');
+        return;
+    }
+    _setEngineMode(_apexEngineMode === 'js' ? 'py' : 'js');
+}
+
+// ── Collect all live inputs into a payload dict ──────────────────
+function _buildScanPayload(matchName) {
+    const gn = (id, isFloat) => {
+        const el = document.getElementById(id); if (!el) return 0;
+        const v = el.value.replace(',','.');
+        if (v===''||v==='-'||v==='.') return 0;
+        const n = isFloat ? parseFloat(v) : parseInt(v);
+        return isNaN(n) ? 0 : n;
+    };
+    const gs = (id) => {
+        const el = document.getElementById(id); if (!el) return 0;
+        let v = el.value.replace(',','.');
+        if (v===''||v==='-') { const ph=el.placeholder.replace(',','.'); const n=parseFloat(ph); return isNaN(n)?0:n; }
+        const n=parseFloat(v); return isNaN(n)?0:n;
+    };
+    return {
+        matchName: matchName || '',
+        min:       gn('lMin'), rec:      gn('lRec'),
+        hg:        gn('lHg'),  ag:       gn('lAg'),
+        lastGoal:  gn('lastGoal'),
+        sotH: gn('sotH'), misH: gn('misH'), corH: gn('corH'), daH: gn('daH'),
+        sotA: gn('sotA'), misA: gn('misA'), corA: gn('corA'), daA: gn('daA'),
+        rcH: gn('rcH'), rcA: gn('rcA'),
+        tC: gn('tC', true) || 2.5,
+        sC: gs('sC'), sO: gs('sO'),
+        tO: gn('tO', true) || (gn('tC', true) || 2.5),
+        isKnockout: document.getElementById('isKnockout')?.checked || false,
+        possH: gn('possH'), possA: gn('possA'),
+    };
+}
+
+// ── Call Python API with fallback to JS ───────────────────────────
+async function _runWithPyEngine(n, db) {
+    const payload = _buildScanPayload(n);
+    // Add previous scans for trend / stabQ
+    if (db[n]?.history?.length > 0) {
+        payload.prevScans = db[n].history.slice(0, 5).map(h => {
+            const r = h.data?.raw || {};
+            const p = h.data?.probs || {};
+            return { ...r, probs: p };
+        });
+    }
+    const url = `${_APEX_API_BASE}/api/scan`;
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(5000),
+    });
+    if (!resp.ok) throw new Error(`API ${resp.status}`);
+    return await resp.json();
+}
 
 
 // ════════════════════════════════════════════════════════════════
@@ -2097,25 +2189,51 @@ function runOracleScanner() {
     validateInputs();  // [V36] evidenza visiva (non blocca)
     const btn=document.getElementById('btnScan');
     btn.disabled=true; btn.textContent='⏳ CALCOLO...';
-    setTimeout(()=>{
-        try {
-            saveCurrentMatch();
-            const db=getDB(), data=runOracleEngine(n,db);
-            // Leggi quote bookie opzionali
-            const getBK=(id)=>{ const v=parseFloat(document.getElementById(id)?.value?.replace(',','.')); return (!isNaN(v)&&v>1.01)?v:null; };
-            data.bookieOdds={
-                '1':getBK('bk1'), 'X':getBK('bkX'), '2':getBK('bk2'),
-                'O_Dyn':getBK('bkO'), 'BTTS':getBK('bkB'),
-                'O15':getBK('bkO15'), 'U25':getBK('bkU25'),
-                'Next_H_c':getBK('bkNH')
-            };
-            if (!db[n].history) db[n].history=[];
-            db[n].history.unshift({id:Date.now(),time:new Date().toLocaleTimeString(),data});
-            if (db[n].history.length>15) db[n].history=db[n].history.slice(0,15);
-            setDB(db); renderHistory(n);
-        } catch(e) { console.error(e); alert('Errore: '+e.message); }
-        finally { btn.disabled=false; btn.textContent='🔮 ESEGUI V40 SCAN'; }
-    },20);
+
+    // ── Helper: finalize scan data and save to DB ──────────────────
+    function _finalize(data, db) {
+        const getBK=(id)=>{ const v=parseFloat(document.getElementById(id)?.value?.replace(',','.')); return (!isNaN(v)&&v>1.01)?v:null; };
+        data.bookieOdds={
+            '1':getBK('bk1'), 'X':getBK('bkX'), '2':getBK('bk2'),
+            'O_Dyn':getBK('bkO'), 'BTTS':getBK('bkB'),
+            'O15':getBK('bkO15'), 'U25':getBK('bkU25'),
+            'Next_H_c':getBK('bkNH')
+        };
+        if (!db[n].history) db[n].history=[];
+        db[n].history.unshift({id:Date.now(),time:new Date().toLocaleTimeString(),data});
+        if (db[n].history.length>15) db[n].history=db[n].history.slice(0,15);
+        setDB(db); renderHistory(n);
+    }
+
+    if (_apexEngineMode === 'py' && _APEX_API_BASE) {
+        // ── Python engine path (async) ─────────────────────────────
+        saveCurrentMatch();
+        const db = getDB();
+        _runWithPyEngine(n, db)
+            .then(data => { _finalize(data, getDB()); })
+            .catch(err => {
+                console.warn('[apex-py] API error, fallback to JS:', err.message);
+                // Fallback: run JS engine and show small notice
+                try {
+                    const data2 = runOracleEngine(n, db);
+                    data2._engineFallback = true;
+                    _finalize(data2, getDB());
+                    const fb = document.getElementById('_apexFallbackNote');
+                    if (fb) { fb.style.display='block'; setTimeout(()=>fb.style.display='none', 4000); }
+                } catch(e2) { console.error(e2); alert('Errore: '+e2.message); }
+            })
+            .finally(() => { btn.disabled=false; btn.textContent='🔮 ESEGUI V40 SCAN'; });
+    } else {
+        // ── JS engine path (default, synchronous) ─────────────────
+        setTimeout(()=>{
+            try {
+                saveCurrentMatch();
+                const db=getDB(), data=runOracleEngine(n,db);
+                _finalize(data, db);
+            } catch(e) { console.error(e); alert('Errore: '+e.message); }
+            finally { btn.disabled=false; btn.textContent='🔮 ESEGUI V40 SCAN'; }
+        },20);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════

@@ -1,4 +1,4 @@
-Flask
-Flask-CORS
-plotly
-streamlit
+Flask>=2.3,<4
+Flask-CORS>=4.0
+plotly>=5.0
+streamlit>=1.28
