@@ -157,6 +157,7 @@ class OracleEngineV40:
     # Scaling constants
     _BLEND_K: float = 0.10          # sigmoid steepness for prior blend
     _BLEND_MID: float = 45.0        # sigmoid midpoint (minutes)
+    _MATCH_DURATION_MINUTES: float = 90.0  # standard match duration
     _XG_BASE_RATE: float = 0.08     # base conversion rate (shots → xG)
     _DA_SOFT_CAP: int = 35          # DA cap before decay kicks in
     _DA_DECAY: float = 0.15         # additional DA weight above soft cap
@@ -198,6 +199,8 @@ class OracleEngineV40:
         if k < 0:
             return 0.0
         log_pmf = k * math.log(lam) - lam - math.lgamma(k + 1)
+        if log_pmf < -700:
+            return 0.0
         return math.exp(log_pmf)
 
     @staticmethod
@@ -253,7 +256,7 @@ class OracleEngineV40:
           time_decay = max(0.05, 1 - min/90)
         """
         minute = self.score.min
-        time_decay = max(0.05, 1.0 - minute / 90.0)
+        time_decay = max(0.05, 1.0 - minute / self._MATCH_DURATION_MINUTES)
         dc_scale = 1.0 / (1.0 + max(0.0, lam_h * lam_a - 1.0) * 0.35)
         rho = -0.10 * dc_scale * time_decay
 
@@ -354,8 +357,8 @@ class OracleEngineV40:
         blended = w * xg_rate + (1.0 - w) * prior
 
         # Scale to remaining minutes
-        minutes_remaining = max(1.0, 90.0 - minute + self.score.rec)
-        return blended * (minutes_remaining / 90.0)
+        minutes_remaining = max(1.0, self._MATCH_DURATION_MINUTES - minute + self.score.rec)
+        return blended * (minutes_remaining / self._MATCH_DURATION_MINUTES)
 
     def apply_score_effects(
         self,
@@ -462,7 +465,7 @@ class OracleEngineV40:
     # ------------------------------------------------------------------
 
     def _minutes_remaining(self) -> float:
-        return max(1.0, 90.0 - self.score.min + self.score.rec)
+        return max(1.0, self._MATCH_DURATION_MINUTES - self.score.min + self.score.rec)
 
     def _compute_xg_rates(self) -> Tuple[float, float]:
         """Convert in-game stats to per-90-min xG rates."""
@@ -476,8 +479,8 @@ class OracleEngineV40:
         )
 
         # Annualise to per-90 rate
-        rate_h = xg_h_elapsed / elapsed * 90.0
-        rate_a = xg_a_elapsed / elapsed * 90.0
+        rate_h = xg_h_elapsed / elapsed * self._MATCH_DURATION_MINUTES
+        rate_a = xg_a_elapsed / elapsed * self._MATCH_DURATION_MINUTES
 
         return rate_h, rate_a
 
@@ -567,7 +570,7 @@ class OracleEngineV40:
         minute = self.score.min
 
         # Time confidence: increases linearly from 30 (0 min) to 80 (90 min)
-        time_conf = 30.0 + (minute / 90.0) * 50.0
+        time_conf = 30.0 + (minute / self._MATCH_DURATION_MINUTES) * 50.0
 
         # Market clarity: how much the leading market share stands out
         market_probs = [probs["1"], probs["X"], probs["2"]]

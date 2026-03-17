@@ -275,11 +275,12 @@ class SteamAnalyzer:
         # Contradictory signals warning
         if (
             total_info["direction"] == "over_steam"
+            and spread_info["direction"] == "away_favoured"
             and spread_info["magnitude"] != "negligible"
         ):
             advice.append(
-                "⚠️ Verify contradictory signals if any spread favours the underdog "
-                "while OVER steam is present."
+                "⚠️ Contradictory signals: OVER steam present while spread favours the away "
+                "side (underdog). Fade caution — wait for confirmation before betting."
             )
 
         if not advice:

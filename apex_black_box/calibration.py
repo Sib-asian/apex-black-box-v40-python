@@ -18,6 +18,8 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, DefaultDict, Dict, List
 
+import numpy as np
+
 
 class CalibrationDashboard:
     """Track and analyse prediction calibration for the Apex Black Box V40 model.
@@ -104,7 +106,7 @@ class CalibrationDashboard:
                 f"Length mismatch: {len(predictions)} predictions vs "
                 f"{len(outcomes)} outcomes."
             )
-        return sum((p - o) ** 2 for p, o in zip(predictions, outcomes)) / len(outcomes)
+        return float(np.mean((np.array(predictions) - np.array(outcomes)) ** 2))
 
     # ------------------------------------------------------------------
     # Analysis methods
