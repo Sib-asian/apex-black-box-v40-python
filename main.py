@@ -1,21 +1,8 @@
-# main.py
+import streamlit as st
+import streamlit.components.v1 as components
+from pathlib import Path
 
-# Importing and initializing the apex_black_box module
-import apex_black_box
+st.set_page_config(page_title="Apex Black Box v4.0", layout="wide")
 
-try:
-    from streamlit.runtime.scriptrunner import get_script_run_ctx as _get_ctx
-    import streamlit as st
-    if _get_ctx() is not None:
-        # Running inside a Streamlit server session: render the UI
-        ctx = apex_black_box.initialize()
-        st.title("Apex Black Box v4.0")
-        st.success("initialize() OK")
-        st.write(ctx)
-except ImportError:
-    # streamlit is not installed; Streamlit UI is skipped
-    pass
-
-if __name__ == '__main__':
-    ctx = apex_black_box.initialize()
-    print("initialize() OK:", ctx)
+html = Path("static/js/V40.html").read_text(encoding="utf-8")
+components.html(html, height=980, scrolling=True)
