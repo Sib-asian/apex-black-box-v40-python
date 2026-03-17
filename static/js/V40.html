@@ -1,0 +1,2517 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Apex Black Box - V40</title>
+    <style>
+        :root {
+            --ferrari-red:#ff003c; --dark-bg:#030305; --panel-bg:#0a0a0f; --panel-border:#1f1f2e;
+            --text-main:#e0e0e0; --text-muted:#666677; --accent:#00ffaa;
+            --gold:#ffb700; --kelly-blue:#00aaff; --matrix-green:#00e066;
+            --chaos-orange:#ff4500; --alert-purple:#8855cc; --steam-color:#4499ff;
+        }
+        * { box-sizing:border-box; margin:0; padding:0; }
+        body { font-family:'Courier New',Courier,monospace; background:var(--dark-bg); color:var(--text-main); padding:10px; display:flex; justify-content:center; }
+        .container { max-width:1100px; width:100%; }
+        h1 { text-align:center; color:var(--gold); text-transform:uppercase; letter-spacing:10px; border-bottom:1px solid var(--panel-border); padding-bottom:5px; margin-bottom:5px; font-weight:900; text-shadow:0 0 15px rgba(255,183,0,0.3); font-size:1.8em; }
+        .subtitle { text-align:center; color:var(--text-muted); font-size:0.7em; margin-bottom:15px; text-transform:uppercase; letter-spacing:3px; }
+        .memory-bar { display:flex; gap:6px; background:#07070a; padding:10px; border-radius:4px; border:1px solid #222; margin-bottom:6px; flex-wrap:wrap; }
+        .memory-bar select,.memory-bar input[type=text] { background:#000; border:1px solid #333; color:var(--text-main); padding:8px; font-family:monospace; flex:1; min-width:120px; font-size:0.9em; }
+        .memory-bar button { background:transparent; border:1px solid var(--text-muted); padding:8px 12px; cursor:pointer; font-weight:bold; text-transform:uppercase; font-size:0.8em; transition:0.2s; color:var(--text-muted); }
+        .btn-save { border-color:var(--gold)!important; color:var(--gold)!important; } .btn-save:hover { background:rgba(255,183,0,0.1); }
+        .btn-del  { border-color:var(--ferrari-red)!important; color:var(--ferrari-red)!important; } .btn-del:hover { background:rgba(255,0,60,0.1); }
+        .btn-exp  { border-color:var(--kelly-blue)!important; color:var(--kelly-blue)!important; } .btn-exp:hover { background:rgba(0,170,255,0.1); }
+        .btn-imp  { border-color:var(--accent)!important; color:var(--accent)!important; } .btn-imp:hover { background:rgba(0,255,170,0.1); }
+        .persist-bar { display:flex; gap:6px; background:#050508; padding:8px 10px; border-radius:4px; border:1px solid #1a1a2a; margin-bottom:15px; flex-wrap:wrap; align-items:center; font-size:0.7em; color:var(--text-muted); }
+        .persist-bar span { flex:1; }
+        #persistStatus { color:var(--accent); font-weight:bold; min-width:180px; }
+        /* [V36] Input validation */
+        input.input-warn { border-color:var(--chaos-orange)!important; }
+        input.input-error { border-color:var(--ferrari-red)!important; }
+        #fileImport { display:none; }
+        .section-title { color:var(--text-muted); font-size:0.78em; text-transform:uppercase; letter-spacing:2px; margin:12px 0 6px; border-left:3px solid var(--gold); padding-left:8px; display:flex; justify-content:space-between; align-items:center; }
+        .input-grid,.live-grid,.kelly-grid { display:grid; gap:8px; padding:10px; border-radius:4px; margin-bottom:12px; }
+        .input-grid  { grid-template-columns:repeat(4,1fr); background:var(--panel-bg); border:1px solid var(--panel-border); }
+        .live-grid   { background:rgba(255,183,0,0.02); border:1px solid rgba(255,183,0,0.15); }
+        .kelly-grid  { grid-template-columns:repeat(5,1fr); background:rgba(0,170,255,0.03); border:1px solid rgba(0,170,255,0.15); }
+        .sub-grid-top { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; margin-bottom:10px; }
+        .oracle-box  { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+        .team-panel  { background:rgba(0,0,0,0.6); border:1px solid #222; padding:10px; border-radius:4px; }
+        .team-panel.casa  { border-top:2px solid var(--matrix-green); }
+        .team-panel.trasf { border-top:2px solid var(--ferrari-red); }
+        .stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+        .input-group { display:flex; flex-direction:column; }
+        .input-group label { font-size:0.62em; color:var(--text-muted); margin-bottom:3px; text-transform:uppercase; font-weight:bold; white-space:nowrap; }
+        .input-group input,.input-group select { background:#000; border:1px solid #333; color:#fff; padding:6px; font-size:1em; text-align:center; font-family:monospace; width:100%; }
+        .input-group input:focus { border-color:var(--gold); outline:none; }
+        .checkbox-group { display:flex; align-items:center; gap:8px; font-size:0.7em; color:var(--gold); border:1px solid #333; padding:6px; background:#000; justify-content:center; text-transform:uppercase; cursor:pointer; }
+        .steam-box { background:#050505; border:1px solid #1a1a1a; padding:8px 10px; margin-bottom:12px; border-radius:4px; font-size:0.7em; font-family:monospace; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .steam-tag { padding:3px 8px; font-weight:bold; text-transform:uppercase; font-size:0.88em; border:1px solid; border-radius:2px; }
+        .steam-none    { border-color:#333; color:#444; }
+        .steam-weak    { border-color:var(--gold); color:var(--gold); background:rgba(255,183,0,0.08); }
+        .steam-strong  { border-color:var(--steam-color); color:var(--steam-color); background:rgba(68,153,255,0.08); }
+        .steam-reverse { border-color:var(--ferrari-red); color:var(--ferrari-red); background:rgba(255,0,60,0.08); }
+        .btn-scan { width:100%; background:linear-gradient(135deg,#0a2010,#143020); color:var(--matrix-green); border:1px solid var(--matrix-green); padding:15px; font-size:1.1em; font-weight:900; text-transform:uppercase; letter-spacing:5px; cursor:pointer; margin-bottom:12px; transition:0.3s; }
+        .btn-scan:hover:not(:disabled) { background:var(--gold); color:#000; }
+        .btn-scan:disabled { opacity:0.5; cursor:not-allowed; }
+        .btn-kelly { width:100%; padding:10px; background:#001525; color:var(--kelly-blue); border:1px dashed var(--kelly-blue); cursor:pointer; font-weight:bold; margin-bottom:20px; font-family:monospace; }
+        .log-entry { background:var(--panel-bg); border:1px solid var(--panel-border); border-left:4px solid #333; padding:12px; margin-top:10px; font-family:sans-serif; }
+        .log-header { display:flex; justify-content:space-between; border-bottom:1px solid #1a1a24; padding-bottom:6px; margin-bottom:8px; align-items:center; }
+        .log-min { color:var(--gold); font-weight:bold; font-family:monospace; font-size:1.1em; }
+        .xg-display { font-size:0.68em; font-family:monospace; padding:2px 6px; border-radius:3px; border:1px solid #1a2a1a; background:rgba(0,10,5,0.6); }
+        .tactical-alerts { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+        /* [V38] Alert semplificati: blocchi leggibili, non inline */
+        .t-alert          { display:block; padding:5px 10px 5px 12px; font-size:0.72em; font-family:monospace; margin:3px 0; border-radius:2px; line-height:1.45; }
+        .t-alert.trap     { background:rgba(200,0,0,0.08);    color:#ff9999; border-left:3px solid var(--ferrari-red); }
+        .t-alert.value    { background:rgba(0,200,100,0.08);  color:#aaffcc; border-left:3px solid var(--matrix-green); }
+        .t-alert.tactical { background:rgba(255,183,0,0.08);  color:#ffd080; border-left:3px solid var(--gold); }
+        .t-alert.chaos    { background:rgba(255,100,0,0.08);  color:#ffb347; border-left:3px solid var(--chaos-orange); }
+        .t-alert.info     { background:rgba(100,100,100,0.08);color:#aaaaaa; border-left:3px solid #555; }
+        .t-alert.steam    { background:rgba(30,144,255,0.08); color:#88aaff; border-left:3px solid var(--steam-color); }
+        .t-alert.pattern  { background:rgba(255,200,0,0.06);  color:var(--gold); border-left:3px solid var(--gold); }
+        .vix-container { background:#050505; border:1px solid #222; padding:6px; font-family:monospace; font-size:0.7em; display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+        .vix-bar { flex:1; height:4px; background:#111; overflow:hidden; }
+        .vix-fill { height:100%; }
+        .conf-bar-wrap { display:flex; align-items:center; gap:8px; font-size:0.68em; font-family:monospace; margin-bottom:8px; }
+        .conf-bar  { flex:1; height:3px; background:#111; }
+        .conf-fill { height:100%; }
+        .dynamic-lines-grid { display:grid; gap:4px; margin-top:8px; padding-top:8px; border-top:1px dotted #333; text-align:center; }
+        .grid-5 { grid-template-columns:repeat(5,1fr); }
+        .grid-6 { grid-template-columns:repeat(6,1fr); }
+        @media(max-width:480px) { .grid-6{grid-template-columns:repeat(3,1fr);} .grid-5{grid-template-columns:repeat(3,1fr);} }
+        @media(max-width:480px) { .grid-6{grid-template-columns:repeat(3,1fr);} .grid-5{grid-template-columns:repeat(3,1fr);} }
+        .grid-3 { grid-template-columns:repeat(3,1fr); }
+        .grid-4 { grid-template-columns:repeat(4,1fr); }
+        .dyn-box { background:#000; border:1px solid #222; padding:8px; }
+        .dyn-box .lbl  { color:var(--text-muted); font-size:0.68em; text-transform:uppercase; display:block; margin-bottom:4px; }
+        .dyn-box .val  { color:#fff; font-weight:bold; font-size:1.1em; }
+        .dyn-box .prob { color:var(--kelly-blue); font-size:0.68em; display:block; margin-top:2px; }
+        .dyn-box.highlight { border-color:var(--gold); }
+        .ht-title { font-size:0.6em; color:var(--gold); text-transform:uppercase; letter-spacing:2px; text-align:left; margin-top:10px; margin-bottom:4px; font-weight:bold; }
+        .matrix-wrap  { margin-top:10px; padding-top:10px; border-top:1px dotted #333; }
+        .matrix-title { font-size:0.6em; color:var(--alert-purple); text-transform:uppercase; letter-spacing:2px; margin-bottom:6px; font-weight:bold; }
+        .matrix-grid  { display:grid; gap:2px; }
+        .matrix-cell  { background:#000; border:1px solid #1a1a1a; padding:5px 2px; text-align:center; font-size:0.6em; font-family:monospace; }
+        .matrix-cell .sc  { color:#555; display:block; font-size:0.9em; }
+        .matrix-cell .pct { font-weight:bold; }
+        .matrix-cell.hot  { border-color:var(--chaos-orange); }
+        .matrix-cell.warm { border-color:var(--gold); }
+        .steam-log-box { background:rgba(68,153,255,0.04); border:1px solid rgba(68,153,255,0.20); padding:6px 10px; font-size:0.7em; font-family:monospace; margin-bottom:8px; display:flex; gap:12px; flex-wrap:wrap; }
+        .steam-log-item { display:flex; flex-direction:column; }
+        .steam-log-item span:first-child { color:var(--text-muted); font-size:0.88em; text-transform:uppercase; }
+        .steam-log-item span:last-child  { font-weight:bold; }
+        /* Steam Pre-match Advice */
+        .steam-advice-box { background:#05050a; border:1px solid #1a1a2e; border-left:3px solid var(--steam-color); padding:8px 10px; margin-top:6px; font-family:monospace; font-size:0.68em; display:flex; flex-direction:column; gap:5px; }
+        .steam-adv-title { color:var(--steam-color); font-size:0.78em; text-transform:uppercase; letter-spacing:2px; font-weight:bold; margin-bottom:2px; }
+        .steam-adv-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:4px 0; border-bottom:1px dotted #111; }
+        .steam-adv-row:last-child { border-bottom:none; }
+        .steam-adv-cat { min-width:58px; font-weight:bold; font-size:0.88em; text-transform:uppercase; }
+        .steam-adv-pick { color:#ddd; font-weight:bold; flex:1; min-width:140px; }
+        .steam-adv-note { color:var(--text-muted); font-size:0.88em; flex:2; }
+        .steam-adv-str { font-size:0.72em; padding:1px 5px; border:1px solid; text-transform:uppercase; font-weight:bold; white-space:nowrap; border-radius:2px; }
+        /* V28 Metrics Panel */
+        .metrics-panel { background:#060610; border:1px solid #2a2a3a; border-left:3px solid #2a2a5a; padding:8px 10px; margin:8px 0; font-family:monospace; font-size:0.68em; }
+        .metrics-title { color:var(--text-muted); font-size:0.8em; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px; font-weight:bold; }
+        .metrics-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:5px; }
+        .metric-item { background:#000; border:1px solid #1a1a24; padding:5px 7px; }
+        .metric-item .m-lbl { color:#444; font-size:0.88em; display:block; margin-bottom:2px; }
+        .metric-item .m-val { color:#ccc; font-weight:bold; }
+        .metric-item .m-tag { font-size:0.78em; padding:1px 4px; border:1px solid; border-radius:2px; margin-left:4px; }
+        /* Mini Chart */
+        .mini-chart { background:#030305; border:1px solid #111; padding:8px 10px; margin:8px 0; font-family:monospace; font-size:0.62em; }
+        .mini-chart-title { color:var(--text-muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:5px; }
+        .chart-row { display:flex; align-items:center; gap:6px; margin:2px 0; }
+        .chart-lbl { min-width:55px; color:var(--text-muted); }
+        .chart-bar { flex:1; height:6px; background:#0a0a12; position:relative; border-radius:2px; overflow:hidden; }
+        .chart-fill { height:100%; border-radius:2px; }
+        .chart-val { min-width:30px; text-align:right; color:#888; }
+        /* MC Distribution */
+        .mc-dist { background:#030305; border:1px solid #111; border-top:1px solid #1a1a2e; padding:7px 10px; margin-top:6px; font-family:monospace; font-size:0.62em; }
+        .mc-title { color:var(--gold); text-transform:uppercase; letter-spacing:1px; margin-bottom:5px; }
+        .mc-row { display:flex; align-items:center; gap:6px; margin:2px 0; }
+        .mc-score { min-width:35px; color:#888; }
+        .mc-bar { flex:1; height:5px; background:#080810; }
+        .mc-fill { height:100%; }
+        .mc-pct { min-width:30px; text-align:right; color:#666; }
+        /* Fingerprint */
+        .fingerprint-box { background:#030305; border:1px solid #111; border-left:3px solid var(--gold); padding:7px 10px; margin-top:6px; font-family:monospace; font-size:0.68em; color:var(--text-muted); }
+        .fingerprint-title { color:var(--gold); text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; font-size:0.88em; }
+        @media(max-width:768px) { .metrics-grid{grid-template-columns:repeat(2,1fr);} }
+        .verdict-box { background:#020a04; border:1px solid #1a3a1a; border-left:4px solid var(--matrix-green); padding:10px 12px; margin-bottom:10px; font-family:monospace; }
+        .verdict-title { font-size:0.68em; color:var(--matrix-green); text-transform:uppercase; letter-spacing:3px; margin-bottom:8px; font-weight:900; }
+        .verdict-pick { display:flex; align-items:center; gap:10px; margin-bottom:6px; flex-wrap:wrap; }
+        .verdict-badge { padding:3px 8px; font-weight:bold; font-size:0.78em; text-transform:uppercase; border:1px solid; }
+        .badge-go     { border-color:var(--matrix-green); color:var(--matrix-green); background:rgba(0,255,0,0.08); }
+        .badge-watch  { border-color:var(--gold); color:var(--gold); background:rgba(255,183,0,0.08); }
+        .badge-skip   { border-color:var(--ferrari-red); color:var(--ferrari-red); background:rgba(255,0,60,0.08); }
+        .badge-spec   { border-color:var(--chaos-orange); color:var(--chaos-orange); background:rgba(255,69,0,0.08); }
+        .verdict-pick-name { color:#fff; font-size:0.88em; font-weight:bold; }
+        .verdict-pick-odds { color:var(--kelly-blue); font-size:0.8em; }
+        .verdict-pick-note { color:var(--text-muted); font-size:0.7em; font-style:italic; }
+        .verdict-sep  { border-top:1px dotted #1a3a1a; margin:6px 0; }
+        .verdict-trap { color:var(--ferrari-red); font-size:0.7em; }
+        .verdict-empty { color:var(--text-muted); font-size:0.78em; font-style:italic; }
+        @media (max-width:768px) {
+            .sub-grid-top { grid-template-columns:repeat(4,1fr); }
+            .oracle-box   { grid-template-columns:1fr; }
+            .input-grid   { grid-template-columns:repeat(2,1fr); }
+            .kelly-grid   { grid-template-columns:repeat(2,1fr); }
+            .grid-5,.grid-6 { grid-template-columns:repeat(3,1fr); }
+            .grid-4       { grid-template-columns:repeat(2,1fr); }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>V40</h1>
+    <div class="subtitle">Analisi live per scommesse sportive · V40</div>
+
+    <div class="memory-bar">
+        <select id="savedMatches" onchange="loadSelectedMatch()"><option value="">-- Nuova Partita --</option></select>
+        <input type="text" id="matchName" placeholder="Nome Match" maxlength="50">
+        <label class="checkbox-group"><input type="checkbox" id="isKnockout"> Torneo/Must-Win</label>
+        <button class="btn-save" onclick="saveCurrentMatch()">💾 Salva</button>
+        <button class="btn-save" style="background:transparent;color:var(--matrix-green);border-color:var(--matrix-green);font-size:0.78em" onclick="const s=prompt('Score finale (es. 2-1):');if(s&&s.includes('-')){const n=document.getElementById('matchName').value.trim();if(n)saveMatchResult(n,s.trim());}" title="Salva risultato per tracking accuratezza">📊 RIS.</button>
+        <button class="btn-del"  onclick="deleteCurrentMatch()">🗑️ Del</button>
+        <button class="btn-exp"  onclick="exportDB()">📤 Export</button>
+        <button class="btn-exp" style="background:transparent;color:var(--kelly-blue);border-color:var(--kelly-blue)" onclick="showDashboard()" title="Dashboard statistiche personali">📈 Stats</button>
+        <button class="btn-exp" style="background:transparent;color:var(--gold);border-color:var(--gold)" onclick="runCalibration()" title="Analizza bias sulle tue partite con risultato salvato">🎯 Calibra</button>
+        <button class="btn-imp"  onclick="document.getElementById('fileImport').click()">📥 Import</button>
+        <input type="file" id="fileImport" accept=".json" onchange="importDB(event)">
+    </div>
+
+    <div class="persist-bar">
+        <span>💾 PERSISTENZA:</span>
+        <span id="persistStatus">Caricamento...</span>
+        <span id="persistCount" style="color:var(--text-muted)"></span>
+    </div>
+
+    <div class="section-title">1. Quote pre-partita</div>
+    <div class="input-grid">
+        <div class="input-group"><label>Spr. Open</label><input type="text" id="sO" placeholder="-0.5" oninput="updateSteam()"></div>
+        <div class="input-group"><label>Spr. Curr</label><input type="text" id="sC" placeholder="-0.5" oninput="updateSteam()"></div>
+        <div class="input-group"><label>Tot. Open</label><input type="text" id="tO" placeholder="2.5"  oninput="updateSteam()"></div>
+        <div class="input-group"><label>Tot. Curr</label><input type="text" id="tC" placeholder="2.75" oninput="updateSteam()"></div>
+    </div>
+
+    <div class="steam-box">
+        <span style="color:var(--text-muted);font-size:0.9em;">STEAM MOVE:</span>
+        <span class="steam-tag steam-none" id="steamTag">NESSUN DATO</span>
+        <span id="steamDetail" style="color:var(--text-muted)">Inserisci spread e total apertura/corrente</span>
+    </div>
+    <div class="steam-advice-box" id="steamAdvice" style="display:none">
+        <div class="steam-adv-title">📋 Pre-match Advice da Steam</div>
+    </div>
+
+    <div class="section-title" style="color:var(--gold)">2. Dati live partita</div>
+    <div class="live-grid">
+        <div class="sub-grid-top">
+            <div class="input-group"><label>Minuto</label><input type="number" id="lMin" value="0" min="0" max="120"></div>
+            <div class="input-group"><label style="color:var(--gold)">Recupero (+)</label><input type="number" id="lRec" placeholder="5" min="0" max="15"></div>
+            <div class="input-group"><label style="color:var(--kelly-blue)" title="Minuto in cui è stato segnato l'ultimo gol (lascia 0 se nessun gol)">Min. Ultimo Gol</label><input type="number" id="lastGoal" placeholder="es. 34" min="0" max="120"></div>
+            <div class="input-group"><label title="Gol segnati dalla squadra di casa">Gol Casa</label><input type="number" id="lHg" value="0" min="0"></div>
+            <div class="input-group"><label title="Gol segnati dalla squadra in trasferta">Gol Trasf</label><input type="number" id="lAg" value="0" min="0"></div>
+            <div class="input-group"><label style="color:var(--ferrari-red)" title="Cartellini rossi squadra di casa (0, 1 o 2)">Rosso Casa</label><input type="number" id="rcH" value="0" min="0" max="2"></div>
+            <div class="input-group"><label style="color:var(--ferrari-red)" title="Cartellini rossi squadra in trasferta (0, 1 o 2)">Rosso Trasf</label><input type="number" id="rcA" value="0" min="0" max="2"></div>
+        </div>
+        <div class="oracle-box">
+            <div class="team-panel casa">
+                <div class="team-label" style="font-size:0.7em;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px;display:flex;justify-content:space-between;font-weight:bold;"><span>Casa Stats</span></div>
+                <div class="stats-row">
+                    <div class="input-group"><label title="Tiri nello specchio (in porta)">SoT Casa</label><input type="number" id="sotH" placeholder="0" min="0"></div>
+                    <div class="input-group"><label title="Tiri fuori dallo specchio">Fuori Casa</label><input type="number" id="misH" placeholder="0" min="0"></div>
+                    <div class="input-group"><label title="Calci d'angolo">Corner Casa</label><input type="number" id="corH" placeholder="0" min="0"></div>
+                    <div class="input-group"><label title="Attacchi pericolosi nell'area (Dangerous Attacks)">Att. Peric. Casa</label><input type="number" id="daH" placeholder="0" min="0"></div>
+                </div>
+                <div class="stats-row" style="margin-top:6px;">
+                    <div class="input-group" style="grid-column:span 4"><label style="color:var(--kelly-blue)">Possesso % <span style="color:#444">(opt.)</span></label><input type="number" id="possH" placeholder="50" min="0" max="100" style="color:var(--kelly-blue)" oninput="const v=parseInt(this.value); if(!isNaN(v)&&v>=0&&v<=100){const pa=document.getElementById('possA');if(!pa.dataset.manual||pa.dataset.manual==='0')pa.value=100-v;}"></div>
+                </div>
+            </div>
+            <div class="team-panel trasf">
+                <div class="team-label" style="font-size:0.7em;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px;display:flex;justify-content:space-between;font-weight:bold;"><span>Trasf Stats</span></div>
+                <div class="stats-row">
+                    <div class="input-group"><label title="Tiri nello specchio (in porta)">SoT Trasf</label><input type="number" id="sotA" placeholder="0" min="0"></div>
+                    <div class="input-group"><label title="Tiri fuori dallo specchio">Fuori Trasf</label><input type="number" id="misA" placeholder="0" min="0"></div>
+                    <div class="input-group"><label title="Calci d'angolo">Corner Trasf</label><input type="number" id="corA" placeholder="0" min="0"></div>
+                    <div class="input-group"><label title="Attacchi pericolosi nell'area (Dangerous Attacks)">Att. Peric. Trasf</label><input type="number" id="daA" placeholder="0" min="0"></div>
+                </div>
+                <div class="stats-row" style="margin-top:6px;">
+                    <div class="input-group" style="grid-column:span 4"><label style="color:var(--ferrari-red)">Possesso % <span style="color:#444">(opt. — auto)</span></label><input type="number" id="possA" placeholder="50" min="0" max="100" style="color:var(--ferrari-red)" oninput="this.dataset.manual='1'" onblur="if(!this.value)this.dataset.manual='0'"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div style="display:flex;gap:6px"><button class="btn-scan" id="btnScan" style="flex:1" onclick="runOracleScanner()">🔮 ESEGUI V40 SCAN</button><button class="btn-exp" style="width:auto;padding:0 16px;font-size:1.1em" onclick="clearLiveFields()" title="Azzera campi live">🔄</button></div>
+
+    <!-- [UPGRADE V25] Quote bookie per edge check in tempo reale nell'Oracle Verdict -->
+    <div class="section-title" style="color:var(--kelly-blue)">3. Quote bookie (opzionale) <span style="color:#444;font-size:0.85em">(opzionale)</span></div>
+    <div class="input-grid" style="grid-template-columns:repeat(4,1fr);background:rgba(184,41,248,0.03);border:1px solid rgba(184,41,248,0.15);">
+        <div class="input-group"><label style="color:var(--matrix-green)">@1 Bookie</label><input type="text" id="bk1" placeholder="es. 2.50"></div>
+        <div class="input-group"><label>@X Bookie</label><input type="text" id="bkX" placeholder="es. 3.40"></div>
+        <div class="input-group"><label style="color:var(--ferrari-red)">@2 Bookie</label><input type="text" id="bk2" placeholder="es. 3.10"></div>
+        <div class="input-group"><label style="color:var(--gold)">@Over Bookie</label><input type="text" id="bkO" placeholder="es. 1.90"></div>
+        <div class="input-group"><label style="color:var(--accent)">@BTTS Bookie</label><input type="text" id="bkB" placeholder="es. 1.95"></div>
+        <div class="input-group"><label style="color:var(--kelly-blue)">@Over 1.5 Bookie</label><input type="text" id="bkO15" placeholder="es. 1.25"></div>
+        <div class="input-group"><label>@Under 2.5 Bookie</label><input type="text" id="bkU25" placeholder="es. 1.85"></div>
+        <div class="input-group"><label style="color:var(--steam-color)">@Next Gol Casa</label><input type="text" id="bkNH" placeholder="es. 2.10"></div>
+    </div>
+
+    <div class="section-title" style="color:var(--kelly-blue)">4. Gestione stake (Kelly)</div>
+    <div class="kelly-grid">
+        <div class="input-group"><label>Bankroll (€)</label><input type="number" id="bankroll" value="100" min="1"></div>
+        <div class="input-group"><label>Fair Odd Calc.</label><input type="text" id="kFair" placeholder="es. 1.80" style="color:var(--kelly-blue)"></div>
+        <div class="input-group"><label>Quota Bookie</label><input type="text" id="bOdd" placeholder="es. 2.10"></div>
+        <div class="input-group"><label>VIX Attuale</label><input type="text" id="kVix" placeholder="Esegui scan" readonly style="color:var(--gold)"></div>
+        <div class="input-group"><label>Frazi.</label><select id="kellyFrac"><option value="0.25">1/4</option><option value="0.5" selected>1/2</option></select></div>
+    </div>
+    <button class="btn-kelly" onclick="calculateKelly()">⚖️ Calcola Stake (VIX-Adjusted)</button>
+
+    <div id="logContainer"></div>
+</div>
+
+<script>
+
+
+// ════════════════════════════════════════════════════════════════
+// [V37 P5] DASHBOARD STORICO PERSONALE
+function showDashboard() {
+    const db=getDB();
+    const matches=Object.entries(db).filter(([k])=>!k.startsWith('_'));
+    const withResult=matches.filter(([,m])=>m.result);
+    const totalScans=matches.reduce((s,[,m])=>s+(m.history?.length||0),0);
+    if(matches.length===0){alert('Nessun match nel DB.');return;}
+    let briers=[],greensWon=[],biasP1=[],biasPX=[],biasO=[];
+    withResult.forEach(([,match])=>{
+        const r=match.result,scan=match.history?.[0]?.data;
+        if(!scan?.probs) return;
+        const pts=r.finalScore.split('-').map(Number);
+        if(pts.length!==2||pts.some(isNaN)) return;
+        const[hgF,agF]=pts;
+        const a1=hgF>agF?1:0,aX=hgF===agF?1:0,a2=hgF<agF?1:0,aO=(hgF+agF)>2.5?1:0;
+        const p1=scan.probs['1']||0,pX=scan.probs['X']||0,pO=(scan.probs.Over25||scan.probs.O_Dyn)||0;
+        briers.push(((p1-a1)**2+(pX-aX)**2+((1-p1-pX)-a2)**2+(pO-aO)**2)/4);
+        biasP1.push(p1-a1);biasPX.push(pX-aX);biasO.push(pO-aO);
+        try{
+            const adv=generateAdvice(scan);
+            if(adv.topPick){
+                const tp=adv.topPick;
+                const won=(tp.id==='1'&&a1)||(tp.id==='X'&&aX)||(tp.id==='2'&&a2)||
+                    ((tp.id==='over'||tp.id==='over15')&&aO)||(tp.id==='under25'&&!aO)||(tp.id==='btts'&&hgF>0&&agF>0);
+                greensWon.push(won?1:0);
+            }
+        }catch(e){}
+    });
+    const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
+    const bAvg=avg(briers);
+    const gWin=avg(greensWon);
+    const b1=avg(biasP1),bX2=avg(biasPX),bO2=avg(biasO);
+    const pct=v=>v!=null?(v>=0?'+':'')+( v*100).toFixed(1)+'%':'-';
+    const now=Date.now(),weekMs=7*24*3600*1000;
+    const recent=withResult.filter(([,m])=>m.result?.savedAt&&new Date(m.result.savedAt)>(now-4*weekMs));
+    const briersR=recent.map(([,m])=>{
+        const sc=m.history?.[0]?.data;if(!sc?.probs) return null;
+        const pts=m.result.finalScore.split('-').map(Number);if(pts.some(isNaN)) return null;
+        const[h,a]=pts;const p1=sc.probs['1']||0,pX=sc.probs['X']||0,pO=sc.probs.O_Dyn||0;
+        return ((p1-(h>a?1:0))**2+(pX-(h===a?1:0))**2+((1-p1-pX)-(h<a?1:0))**2+(pO-((h+a)>2.5?1:0))**2)/4;
+    }).filter(b=>b!=null);
+    const bR=avg(briersR);
+    let r='DASHBOARD STORICO\n'+'='.repeat(40)+'\n\n';
+    r+='Match: '+matches.length+' | Scan: '+totalScans+' | Con risultato: '+withResult.length+'\n\n';
+    if(bAvg!=null){
+        const q=bAvg<0.12?'OTTIMA':bAvg<0.17?'BUONA':bAvg<0.22?'MEDIA':'DA MIGLIORARE';
+        r+='Qualita previsioni: '+q+'\nBrier score medio: '+bAvg.toFixed(3)+'\n';
+        if(bR!=null) r+='Brier ultime 4 sett: '+bR.toFixed(3)+' ('+(bR<bAvg?'migliorando':'peggiorando')+')\n';
+        r+='\n';
+    }
+    if(greensWon.length>0) r+='Pick GREEN: '+greensWon.length+' | % vittorie: '+(gWin*100).toFixed(0)+'%\n\n';
+    if(b1!=null){
+        r+='Bias sistematici:\n';
+        r+='  P(1): '+pct(b1)+(Math.abs(b1)>0.04?' ATTENZIONE':'')+'\n';
+        r+='  P(X): '+pct(bX2)+(Math.abs(bX2)>0.04?' ATTENZIONE':'')+'\n';
+        r+='  Over: '+pct(bO2)+(Math.abs(bO2)>0.05?' ATTENZIONE':'')+'\n';
+    }
+    r+='\nAffidabilita: '+(withResult.length>=20?'SOLIDA ('+withResult.length+')':withResult.length>=10?'INDICATIVA ('+withResult.length+'/20)':'INSUFFICIENTE ('+withResult.length+'/20)');
+    alert(r);
+}
+// ════════════════════════════════════════════════════════════════
+//  [V36] SISTEMA DI CALIBRAZIONE PERSONALE
+//  Analizza i tuoi risultati salvati per rilevare bias sistematici
+//  Non modifica automaticamente i parametri — mostra deviazioni
+//  e propone offset che puoi accettare o rifiutare
+// ════════════════════════════════════════════════════════════════
+
+function runCalibration() {
+    const db=getDB();
+    const results=[];
+    // Raccoglie tutti i match con risultato salvato + ultimo scan
+    Object.entries(db).forEach(([name,match])=>{
+        if (!match.result||!match.history?.length) return;
+        const res=match.result;
+        const scan=match.history[0]?.data; // scan più recente
+        if (!scan?.probs) return;
+        const pts=res.finalScore.split('-').map(Number);
+        if (pts.length!==2||pts.some(isNaN)) return;
+        const [hgF,agF]=pts;
+        results.push({
+            name, probs:scan.probs, finalScore:res.finalScore,
+            actual1:hgF>agF?1:0, actualX:hgF===agF?1:0, actual2:hgF<agF?1:0,
+            actualOver:(hgF+agF)>2.5?1:0, actualBTTS:(hgF>0&&agF>0)?1:0,
+            brier:res.brier, confidence:scan.confidence||50
+        });
+    });
+
+    const n=results.length;
+    if (n<5) {
+        alert(`📊 Calibrazione: servono almeno 5 partite con risultato salvato.
+Hai ${n} partite — continua ad accumulare dati!`);
+        return;
+    }
+
+    // ── Calcola statistiche ──────────────────────────────────
+    const avg=(arr)=>arr.reduce((a,b)=>a+b,0)/arr.length;
+    const p1_pred=avg(results.map(r=>r.probs['1']||0));
+    const p1_real=avg(results.map(r=>r.actual1));
+    const pX_pred=avg(results.map(r=>r.probs['X']||0));
+    const pX_real=avg(results.map(r=>r.actualX));
+    const pO_pred=avg(results.map(r=>r.probs.O_Dyn||0));
+    const pO_real=avg(results.map(r=>r.actualOver));
+    const pB_pred=avg(results.map(r=>r.probs.BTTS||0));
+    const pB_real=avg(results.map(r=>r.actualBTTS));
+
+    // Brier scores
+    const brier1=avg(results.map(r=>((r.probs['1']||0)-r.actual1)**2));
+    const brierX=avg(results.map(r=>((r.probs['X']||0)-r.actualX)**2));
+    const brier2=avg(results.map(r=>((r.probs['2']||0)-r.actual2)**2));
+    const brierO=avg(results.map(r=>((r.probs.O_Dyn||0)-r.actualOver)**2));
+    const brierAvg=(brier1+brierX+brier2+brierO)/4;
+
+    // Calibration: deviazione predetto vs reale
+    const bias1  = p1_pred - p1_real;   // + = sovrastima P(1)
+    const biasX  = pX_pred - pX_real;   // + = sovrastima P(X)
+    const biasO  = pO_pred - pO_real;   // + = sovrastima Over
+    const biasB  = pB_pred - pB_real;
+
+    // Confidenza vs accuratezza (calibrazione bayesiana)
+    const hiConf=results.filter(r=>r.confidence>65);
+    const hiAccuracy=hiConf.length>0?hiConf.filter(r=>{
+        const topProb=Math.max(r.probs['1']||0,r.probs['X']||0,r.probs['2']||0);
+        const topKey=topProb===(r.probs['1']||0)?'1':topProb===(r.probs['X']||0)?'X':'2';
+        return (topKey==='1'&&r.actual1)||(topKey==='X'&&r.actualX)||(topKey==='2'&&r.actual2);
+    }).length/hiConf.length:null;
+
+    // ── Mostra risultati ─────────────────────────────────────
+    const pct=(v)=>(v*100).toFixed(1)+'%';
+    const pp=(v)=>(v>=0?'+':'')+pct(v);
+    const quality=brierAvg<0.15?'BUONA':brierAvg<0.22?'MEDIA':'DA MIGLIORARE';
+
+    let report=`📊 CALIBRAZIONE PERSONALE — ${n} partite analizzate
+`;
+    report+=`${'═'.repeat(50)}
+
+`;
+    report+=`Qualità globale: ${quality} (Brier avg: ${brierAvg.toFixed(3)})
+
+`;
+    report+=`MERCATO    PREDETTO   REALE      BIAS
+`;
+    report+=`${'─'.repeat(45)}
+`;
+    report+=`P(1)       ${pct(p1_pred).padStart(9)} ${pct(p1_real).padStart(9)} ${pp(bias1).padStart(9)}
+`;
+    report+=`P(X)       ${pct(pX_pred).padStart(9)} ${pct(pX_real).padStart(9)} ${pp(biasX).padStart(9)}
+`;
+    report+=`P(2)       ${pct(1-p1_pred-pX_pred).padStart(9)} ${pct(1-p1_real-pX_real).padStart(9)} ${pp(-(bias1+biasX)).padStart(9)}
+`;
+    report+=`Over 2.5   ${pct(pO_pred).padStart(9)} ${pct(pO_real).padStart(9)} ${pp(biasO).padStart(9)}
+`;
+    report+=`BTTS       ${pct(pB_pred).padStart(9)} ${pct(pB_real).padStart(9)} ${pp(biasB).padStart(9)}
+`;
+    if (hiAccuracy!==null) report+=`
+Acc. scan conf>65%: ${pct(hiAccuracy)} (${hiConf.length} scan)
+`;
+    report+=`
+Brier dettaglio: P1=${brier1.toFixed(3)} PX=${brierX.toFixed(3)} P2=${brier2.toFixed(3)} Over=${brierO.toFixed(3)}
+`;
+
+    // [V36] Brier per scan early
+    const _lc=results.filter(r=>r.confidence<45);
+    if(_lc.length>0){
+        const _lb=_lc.reduce((s,r)=>s+(((r.probs['1']||0)-r.actual1)**2+((r.probs['X']||0)-r.actualX)**2+((r.probs['2']||0)-r.actual2)**2)/3,0)/_lc.length;
+        report+=`Scan conf<45% (${_lc.length}): Brier avg ${_lb.toFixed(3)} ${_lb>0.22?'⚠️ evita scan early':'✅'}\n`;
+    }
+    // ── Suggerimenti calibrazione ─────────────────────────────
+    const suggestions=[];
+    if (Math.abs(biasX)>0.04) suggestions.push(`P(X) ${bias1>0?'sovrastimato':'sottostimato'} di ${pct(Math.abs(biasX))} → considera partite con spread più alto`);
+    if (Math.abs(biasO)>0.05) suggestions.push(`Over ${biasO>0?'sovrastimato':'sottostimato'} di ${pct(Math.abs(biasO))} → considera il tipo di partite che segui`);
+    if (Math.abs(bias1)>0.05) suggestions.push(`P(1) ${bias1>0?'sovrastimato':'sottostimato'} di ${pct(Math.abs(bias1))} → lo spread di apertura potrebbe non essere ottimale`);
+    if (hiAccuracy!==null&&hiAccuracy<0.50&&hiConf.length>=5) suggestions.push(`⚠️ Con conf>65% vinci solo ${pct(hiAccuracy)} dei top pick → la soglia GREEN potrebbe essere troppo bassa`);
+    if (brierAvg>0.20) suggestions.push(`📉 Brier avg alto (${brierAvg.toFixed(3)}) — non fare scan a inizio partita (<30')`);
+
+    if (suggestions.length) { report+=`
+💡 SUGGERIMENTI:
+`; suggestions.forEach(s=>report+=`  • ${s}
+`); }
+    else report+=`
+✅ Nessun bias significativo rilevato — buona calibrazione!
+    const _affLabel=n>=20?'SOLIDA ('+n+' partite)':n>=10?'INDICATIVA (accumula ancora)':'INSUFFICIENTE (min 10)';
+    report+='\nAffidabilita: '+_affLabel+'\n';
+`;
+
+    // Salva calibrazione nel DB
+    const calibData={runAt:new Date().toISOString(),n,brierAvg:+brierAvg.toFixed(4),
+        bias:{p1:+bias1.toFixed(4),pX:+biasX.toFixed(4),pO:+biasO.toFixed(4)},
+        accuracy:hiAccuracy};
+    const dbC=getDB(); dbC._calibration=calibData; setDB(dbC);
+
+    alert(report);
+}
+
+// ════════════════════════════════════════════════════════════════
+//  DATABASE — localStorage persistente
+// ════════════════════════════════════════════════════════════════
+const DB_KEY = 'apexDB_v40';
+
+function getDB()   { return window._apexDB || {}; }
+function setDB(db) {
+    window._apexDB = db;
+    try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch(e) { console.warn('localStorage:', e); }
+    updateDropdown(); updatePersistStatus();
+}
+function loadDB() {
+    try {
+        const raw = localStorage.getItem(DB_KEY);
+        window._apexDB = raw ? JSON.parse(raw) : {};
+    } catch(e) { window._apexDB = {}; }
+    // [V36] DB Migration: cerca dati da versioni precedenti
+    migrateOldDB();
+    updateDropdown(); updatePersistStatus();
+}
+function migrateOldDB() {
+    if (Object.keys(window._apexDB).length > 0) return;  // già ha dati
+    const oldKeys=['apexDB_v34','apexDB_v33','apexDB_v32','apexDB_v31','apexDB_v30',
+                   'apexDB_v29','apexDB_v28','apexDB_v27'];
+    for (const key of oldKeys) {
+        try {
+            const raw=localStorage.getItem(key);
+            if (!raw) continue;
+            const old=JSON.parse(raw);
+            if (typeof old==='object'&&Object.keys(old).length>0) {
+                const n=Object.keys(old).length;
+                if (confirm(`🔄 Trovati ${n} match salvati dalla versione precedente (${key.replace('apexDB_','')}).\nMigrare i dati alla versione corrente?`)) {
+                    window._apexDB=old;
+                    localStorage.setItem(DB_KEY,JSON.stringify(old));
+                    alert(`✅ Migrati ${n} match da ${key.replace('apexDB_','')}`);
+                }
+                return;
+            }
+        } catch(e) {}
+    }
+}
+function updatePersistStatus() {
+    const db=getDB(), keys=Object.keys(db);
+    const el=document.getElementById('persistStatus'), cnt=document.getElementById('persistCount');
+    if (!keys.length) { el.textContent='Nessun dato salvato'; el.style.color='var(--text-muted)'; cnt.textContent=''; return; }
+    const scanCount=keys.reduce((s,k)=>s+(db[k].history?.length||0),0);
+    // [V36] Stima dimensione DB
+    const dbStr=localStorage.getItem(DB_KEY)||''; const dbKB=Math.round(dbStr.length/1024);
+    const sizeWarn=dbKB>3000?'⚠️ ':dbKB>1500?'🟡 ':'';
+    el.textContent=`${keys.length} match salvati`; el.style.color='var(--accent)';
+    // [V36] Mostra data ultima calibrazione
+    const _cal=db._calibration;
+    const calNote=_cal?` · 🎯${new Date(_cal.runAt).toLocaleDateString()} B:${_cal.brierAvg}`:'';
+    cnt.textContent=`· ${scanCount} scan · ${sizeWarn}${dbKB}KB${calNote}`;
+    if (dbKB>4000) el.style.color='var(--ferrari-red)';
+}
+function exportDB() {
+    const db=getDB(); if (!Object.keys(db).length) { alert('Nessun dato.'); return; }
+    const exportData={
+        _version:'v40', _exported:new Date().toISOString(),
+        _matchCount:Object.keys(db).length,
+        _scanCount:Object.values(db).reduce((s,m)=>s+(m.history?.length||0),0),
+        matches:db
+    };
+    const json=JSON.stringify(exportData,null,2);
+
+    // [FIX Koder] In ambiente sandboxed (Koder/WKWebView) tutti i metodi di download
+    // sono bloccati. Unica soluzione affidabile: mostrare il JSON in un overlay
+    // che l'utente può selezionare tutto e copiare manualmente.
+
+    // Rimuovi overlay precedente se esiste
+    const existing=document.getElementById('_exportOverlay');
+    if(existing){ document.body.removeChild(existing); return; }
+
+    const overlay=document.createElement('div');
+    overlay.id='_exportOverlay';
+    overlay.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.95);z-index:99999;display:flex;flex-direction:column;padding:12px;box-sizing:border-box;';
+
+    const info=document.createElement('div');
+    info.style.cssText='color:#00ff88;font-family:monospace;font-size:13px;margin-bottom:8px;flex-shrink:0;';
+    const matchN=Object.keys(db).filter(k=>!k.startsWith('_')).length;
+    const scanN=Object.values(db).reduce((s,m)=>s+(m.history?.length||0),0);
+    info.innerHTML='<b>📋 BACKUP DB</b> — '+matchN+' match, '+scanN+' scan<br>'
+        +'<span style="color:#888;font-size:11px">Tieni premuto sul testo → Seleziona tutto → Copia<br>'
+        +'Poi incolla in Note o Files come backup.json</span>';
+
+    const closeBtn=document.createElement('button');
+    closeBtn.textContent='✕ CHIUDI';
+    closeBtn.style.cssText='background:transparent;color:#ff4444;border:1px solid #ff4444;padding:6px 14px;font-family:monospace;font-size:12px;cursor:pointer;flex-shrink:0;margin-bottom:8px;align-self:flex-end;';
+    closeBtn.onclick=()=>document.body.removeChild(overlay);
+
+    const ta=document.createElement('textarea');
+    ta.value=json;
+    ta.readOnly=true;
+    ta.style.cssText='flex:1;width:100%;background:#0a0a0a;color:#00cc66;border:1px solid #00ff88;font-family:monospace;font-size:10px;padding:8px;box-sizing:border-box;resize:none;-webkit-user-select:text;user-select:text;';
+    ta.setAttribute('autocomplete','off');
+    ta.setAttribute('autocorrect','off');
+    ta.setAttribute('spellcheck','false');
+
+    // Auto-select su tap per facilitare "Seleziona tutto"
+    ta.addEventListener('focus',function(){
+        try{ this.setSelectionRange(0,this.value.length); }catch(e){}
+    });
+
+    overlay.appendChild(info);
+    overlay.appendChild(closeBtn);
+    overlay.appendChild(ta);
+    document.body.appendChild(overlay);
+
+    // Focus + select automatico
+    setTimeout(()=>{ ta.focus(); try{ ta.setSelectionRange(0,ta.value.length); }catch(e){} },100);
+}
+function importDB(ev) {
+    const file=ev.target.files[0]; if (!file) return;
+    const r=new FileReader();
+    r.onload=e=>{
+        try {
+            const raw=JSON.parse(e.target.result);
+            if (typeof raw!=='object'||Array.isArray(raw)) throw new Error('Formato non valido');
+            // [V36] Supporta sia vecchio formato {matchName:...} che nuovo {_version,matches:{...}}
+            const p=raw.matches&&typeof raw.matches==='object' ? raw.matches : raw;
+            const meta=raw._version?` (exportato da ${raw._version} il ${raw._exported?.slice(0,10)||'?'})`:'';
+            const db=getDB(); let imp=0,skip=0;
+            for (let k in p) { if (k.startsWith('_')) continue; if (db[k]) skip++; else { db[k]=p[k]; imp++; } }
+            setDB(db); alert(`✅ Import${meta}: ${imp} importati, ${skip} saltati.`);
+        } catch(e2) { alert('❌ '+e2.message); }
+    };
+    r.readAsText(file); ev.target.value='';
+}
+
+// ════════════════════════════════════════════════════════════════
+//  UTILITY
+// ════════════════════════════════════════════════════════════════
+function calcFairOdd(p) {
+    if (!p || p <= 0.005) return '∞';
+    const v = 1/p; return isNaN(v) ? '∞' : v.toFixed(2);
+}
+// [FIX V33] 3 decimali per confronto edge (elimina inversioni da arrotondamento)
+function calcFairOdd3(p) { return (p&&p>0.005) ? 1/p : Infinity; }
+function clamp(v,lo,hi) { return Math.max(lo,Math.min(hi,v)); }
+function getSafeNum(id,isFloat=false) {
+    let v=document.getElementById(id).value.replace(',','.');
+    if (v===''||v==='-'||v==='.') return 0;
+    let n=isFloat?parseFloat(v):parseInt(v); return isNaN(n)?0:n;
+}
+function getSpread(id) {
+    let v=document.getElementById(id).value.replace(',','.');
+    if (v===''||v==='-') { let ph=document.getElementById(id).placeholder.replace(',','.'); let n=parseFloat(ph); return isNaN(n)?0:n; }
+    let n=parseFloat(v); return isNaN(n)?0:n;
+}
+function getRaw(id) { let v=document.getElementById(id).value.replace(',','.'); let n=parseFloat(v); return isNaN(n)?null:n; }
+
+// ════════════════════════════════════════════════════════════════
+//  MATEMATICA CORE
+// ════════════════════════════════════════════════════════════════
+
+function sigmoidWeight(min) { return 1/(1+Math.exp(-0.10*(min-45))); }  // [V26] k=0.08→0.10
+
+// [UPGRADE V25] Rhythm curve ricalibrata su dati reali Serie A/PL:
+const RHYTHM_NORM = (15*0.80+15*0.90+35*0.95+15*1.10+10*1.30)/90;
+function rhythmCurve(m) {
+    let r;
+    if      (m<15) r=0.80;
+    else if (m<30) r=0.90;
+    else if (m<65) r=0.95;
+    else if (m<80) r=1.10;
+    else if (m<90) r=1.30;
+    else           r=1.10;   // [FIX V30] Recupero: 1.50→1.10 (era troppo aggressivo)
+    return r/RHYTHM_NORM;
+}
+
+const MEAN_GOALS_PER_MIN = 1.35/90;
+
+// [V31] calcXgObs: FIX DA soft cap
+// V30: cap duro a 35 → da=36 e da=40 davano stesso xG (plateau)
+// V31: soft cap — oltre 35 DA ogni unità vale il 15% (segnale debole ma continuo)
+function calcXgObs(sot, mis, da) {
+    const total = sot+mis;
+    const da_eff = Math.min(da, 35) + Math.max(0, da-35)*0.15;  // soft cap
+    if (total===0) return da_eff*0.003;
+    const convRate = clamp(sot/total, 0, 1);
+    // [FIX V32] base=0.10 (era 0.09, dati reali SoT→xG ~0.10-0.115 in Serie A)
+    // convRate range=0.04 (era 0.06) → [0.10,0.14] più realistico di [0.09,0.15]
+    // Continuità: a conv=50% risultato identico (6*(0.10+0.5*0.04)+6*(0.02+0.5*0.02)=0.90)
+    return sot*(0.10+convRate*0.04) + mis*(0.02+convRate*0.02) + da_eff*0.003;
+}
+function calcXgRate(sot, mis, da, min_played, priorPerMin) {
+    min_played = Math.max(1, min_played);
+    const xgObs  = calcXgObs(sot, mis, da);
+    const total  = sot+mis;
+    // [FIX V31] sampleW include DA come segnale debole (da*0.10)
+    // Con 0 tiri e 30 DA: sw=0.12 invece di 0 → piccola fiducia nel live
+    const sampleW = clamp((total + da*0.10)/25, 0, 1);
+    const prior   = priorPerMin || MEAN_GOALS_PER_MIN;
+    const raw     = (xgObs/min_played)*sampleW + prior*(1-sampleW);
+    return Math.min(raw, 3.5/90);
+}
+
+// [FIX V26] pressureFactor: corner per 10 minuti, indipendente dal numero di tiri
+// V25: cor/(att+cor) → si diluiva con i tiri (più tiri = meno effetto corner)
+// V26: cor_rate = cor / max(1, min/10) → corner ogni 10 minuti = segnale puro
+function pressureFactor(cor, sot, mis, min_played) {
+    const cor_rate = cor / Math.max(1, min_played/10);
+    return clamp(1.0 + cor_rate*0.015, 1.0, 1.12);
+}
+
+function poissonPMF(lambda, k) {
+    if (lambda<=0) return k===0?1:0;
+    return Math.exp(k*Math.log(lambda)-lambda-logFact(k));
+}
+const _lfc=[0];
+function logFact(n) {
+    n=Math.min(n,20);
+    if (_lfc[n]!==undefined) return _lfc[n];
+    _lfc[n]=Math.log(n)+logFact(n-1); return _lfc[n];
+}
+
+// [FIX V32] DC_RHO: −0.13→−0.10 (calibrazione moderna Serie A/PL; originale era English 1990s)
+const DC_RHO = -0.10;
+// [FIX V26] DC_RHO temporale: a fine partita i dati live bastano, DC serve meno
+// rho decade linearmente ma mantiene il 15% minimo per non annullare mai la correzione
+function dcCorrectionAdaptive(h, a, lH, lA, min_) {
+    const dcScale = clamp(1.0/(1.0+Math.max(0, lH*lA-1.0)*0.35), 0.3, 1.0);  // [V35] soglia 0.8→1.0
+    const timeDecay = Math.max(0.05, 1.0 - (min_||0)/90);   // [FIX V30] floor 0.15→0.05: a 90' DC quasi spenta
+    const rho = DC_RHO * dcScale * timeDecay;
+    if (h===0&&a===0) return 1-lH*lA*rho;
+    if (h===0&&a===1) return 1+lH*rho;
+    if (h===1&&a===0) return 1+lA*rho;
+    if (h===1&&a===1) return 1-rho;
+    return 1.0;
+}
+
+// [FIX V26] buildResultMatrix riceve min_ per il DC temporale
+function buildResultMatrix(lH, lA, min_) {
+    const maxG = Math.max(9, Math.ceil(Math.max(lH,lA))+5);
+    let matrix=[]; let total=0;
+    for (let h=0;h<=maxG;h++) {
+        for (let a=0;a<=maxG;a++) {
+            const dc = Math.max(0.005, dcCorrectionAdaptive(h,a,lH,lA,min_||0));
+            const p  = poissonPMF(lH,h)*poissonPMF(lA,a)*dc;
+            matrix.push({h,a,p}); total+=p;
+        }
+    }
+    if (total>0) matrix.forEach(c=>c.p/=total);
+    return matrix;
+}
+
+function aggregateFromMatrix(matrix, hgNow, agNow) {
+    let p1=0,pX=0,p2=0,pOver=0,pOver25=0,pBTTS=0,pDNB_H=0,pDNB_A=0,pOver15=0;
+    matrix.forEach(({h,a,p})=>{
+        const fh=hgNow+h, fa=agNow+a;
+        if      (fh>fa) { p1+=p; pDNB_H+=p; }
+        else if (fh<fa) { p2+=p; pDNB_A+=p; }
+        else             pX+=p;
+        // O_Dyn: P(h+a>=2) = P(Over dynOver) — dynOver=hg+ag+1.5 sempre
+        if ((h+a)>=2)    pOver+=p;
+        // pOver25: Over 2.5 fisso — per Oracle e Brier
+        if ((fh+fa)>2.5) pOver25+=p;
+        if ((fh+fa)>1.5) pOver15+=p;
+        if (fh>0&&fa>0)  pBTTS+=p;
+    });
+    const dnb=p1+p2;
+    return { p1, pX, p2, pOver, pOver25, pOver15, pBTTS,
+             p1X: p1+pX, pX2: p2+pX, p12: p1+p2,
+             pDNB_H: dnb>0?pDNB_H/dnb:0,
+             pDNB_A: dnb>0?pDNB_A/dnb:0 };
+}
+
+function poissonSample(lambda) {
+    if (lambda<=0) return 0;
+    let L=Math.exp(-lambda),k=0,p=1;
+    do { k++; p*=Math.random(); } while (p>L); return k-1;
+}
+
+function simulateExtraTime(lH, lA) {
+    const SIMS=5000;
+    const etH1=lH*0.78*(15/90),etA1=lA*0.78*(15/90);
+    const etH2=lH*0.87*(15/90),etA2=lA*0.87*(15/90);
+    let res={H:0,A:0,P_H:0,P_A:0};
+    for (let i=0;i<SIMS;i++) {
+        const gH=poissonSample(etH1)+poissonSample(etH2);
+        const gA=poissonSample(etA1)+poissonSample(etA2);
+        if      (gH>gA) res.H++;
+        else if (gA>gH) res.A++;
+        else { if (Math.random()<0.52) res.P_H++; else res.P_A++; }
+    }
+    return { etH:res.H/SIMS, etA:res.A/SIMS, penH:res.P_H/SIMS, penA:res.P_A/SIMS };
+}
+
+// ════════════════════════════════════════════════════════════════
+//  STEAM MOVE
+// ════════════════════════════════════════════════════════════════
+function analyzeSteam(sO, sC, tO, tC) {
+    const dSpread=sC-sO, dTotal=tC-tO;
+    const adS=Math.abs(dSpread), adT=Math.abs(dTotal);
+    let signals=[], level='none';
+    let lambdaMod={h:1.0, a:1.0};
+
+    const hasSpread = adS >= 0.5;
+    const hasTotal  = adT >= 0.25;
+    const isReverse = hasSpread && dTotal < -0.25 && dSpread < 0;
+    const isReverseA= hasSpread && dTotal < -0.25 && dSpread > 0;
+
+    if (hasSpread) {
+        const mod=1.0+clamp(adS*0.04,0.02,0.08);
+        if (dSpread<0) { signals.push(`Le quote favoriscono la casa: spread passato da ${sO} a ${sC}`); lambdaMod.h*=mod; lambdaMod.a*=(1/mod); }
+        else           { signals.push(`Le quote favoriscono la trasferta: spread passato da ${sO} a ${sC}`); lambdaMod.a*=mod; lambdaMod.h*=(1/mod); }
+        level = adS>=1.0 ? 'strong' : 'weak';
+    }
+    if (hasTotal) {
+        const mod=1.0+clamp(adT*0.06,0.01,0.07);
+        if (dTotal>0) { signals.push(`Atteso più gol: total salito da ${tO} a ${tC}`); lambdaMod.h*=mod; lambdaMod.a*=mod; }
+        else          { signals.push(`Atteso meno gol: total sceso da ${tO} a ${tC}`); lambdaMod.h/=mod; lambdaMod.a/=mod; }
+        if (!hasSpread && level==='none') level = 'weak';
+        if (adT>=0.5 && level==='weak' && !isReverse && !isReverseA) level='strong';
+    }
+    if (isReverse || isReverseA) {
+        level='reverse';
+        if (isReverse)  signals.push('⚠️ STEAM INVERSO: Casa favorita ma total scende');
+        if (isReverseA) signals.push('⚠️ STEAM INVERSO: Trasf favorita ma total scende');
+    }
+    if (hasSpread && hasTotal && level==='weak' && !isReverse && !isReverseA) {
+        if ((dSpread<0&&dTotal>0)||(dSpread>0&&dTotal>0)) level='strong';
+    }
+    if (hasSpread && hasTotal && level==='strong') {
+        if (dSpread<0&&dTotal>0) { signals.push('🔥 CONSENSO: Casa favorita + più gol attesi'); lambdaMod.h*=1.03; }
+        else if (dSpread>0&&dTotal>0) { signals.push('🔥 CONSENSO: Trasf favorita + più gol attesi'); lambdaMod.a*=1.03; }
+    }
+
+    // ── Pre-match advice da steam ──
+    // Costruisce raccomandazioni di mercato basate sulla direzione del denaro
+    const advice = buildSteamAdvice(sO, sC, tO, tC, dSpread, dTotal, adS, adT, level, isReverse, isReverseA);
+
+    return { level, signals, lambdaMod, dSpread, dTotal, adS, adT, advice };
+}
+
+function buildSteamAdvice(sO, sC, tO, tC, dSpread, dTotal, adS, adT, level, isReverse, isReverseA) {
+    // Deriviamo lambda pre-match dai valori correnti (post-steam)
+    const lH = Math.max(0.15,(tC-sC)/2);
+    const lA = Math.max(0.15,(tC+sC)/2);
+    const totalGoals = lH+lA;
+
+    // Calcolo probabilità con matrice Poisson semplificata (per advice rapido pre-match)
+    function pois(lam, k) {
+        if (lam<=0) return k===0?1:0;
+        let log_p = k*Math.log(lam) - lam;
+        for (let i=1;i<=k;i++) log_p-=Math.log(i);
+        return Math.exp(log_p);
+    }
+    // P(1), P(X), P(2) approssimati con Poisson indipendente
+    // [V34 P8] Steam usa buildResultMatrix+DC invece di Poisson puro (+2-3% P(X))
+    const _sm=buildResultMatrix(lH,lA,0); const _sa=aggregateFromMatrix(_sm,0,0);
+    const p1=_sa.p1, pX=_sa.pX, p2=_sa.p2;
+    const pOver25=_sa.pOver, pBTTS=_sa.pBTTS;
+    const pUnder25= 1-pOver25;
+    const pNG     = 1-pBTTS;
+
+    const fo = (p) => p>0.005?(1/p).toFixed(2):'∞';
+    const picks = [];
+
+    // Logica raccomandazioni basata sulla steam direction
+
+    if (level==='none') return picks;  // nessun dato, nessun consiglio
+
+    // ── 1X2 / DNB ──
+    if (hasSignificantSpread(adS, dSpread)) {
+        if (dSpread<0) {
+            // Spread si muove verso casa: soldi sulla Casa
+            if (adS>=1.0) {
+                picks.push({cat:'1X2', pick:'1 — Vittoria Casa', note:'Spread forte verso Casa', fairOdd:fo(p1), prob:p1, icon:'🟢', strength:'FORTE'});
+            } else {
+                picks.push({cat:'1X2', pick:'1 — Vittoria Casa', note:'Spread debole verso Casa', fairOdd:fo(p1), prob:p1, icon:'🟡', strength:'DEBOLE'});
+            }
+        } else {
+            // Spread verso Trasf
+            if (adS>=1.0) {
+                picks.push({cat:'1X2', pick:'2 — Vittoria Trasf', note:'Spread forte verso Trasf', fairOdd:fo(p2), prob:p2, icon:'🔴', strength:'FORTE'});
+            } else {
+                picks.push({cat:'1X2', pick:'2 — Vittoria Trasf', note:'Spread debole verso Trasf', fairOdd:fo(p2), prob:p2, icon:'🟡', strength:'DEBOLE'});
+            }
+        }
+    }
+
+    // ── Over/Under ──
+    if (adT>=0.25) {
+        if (dTotal>0) {
+            // Total sale: soldi su più gol
+            const str = adT>=0.5?'FORTE':'DEBOLE';
+            picks.push({cat:'Over', pick:`Over 2.5`, note:`Total Up +${adT.toFixed(2)} → più gol attesi`, fairOdd:fo(pOver25), prob:pOver25, icon:'⬆️', strength:str});
+            if (pBTTS>0.45&&adT>=0.4) picks.push({cat:'BTTS', pick:'GG (entrambe segnano)', note:'Molti gol = alta prob entrambe', fairOdd:fo(pBTTS), prob:pBTTS, icon:'⚽', strength:'MEDIO'});
+        } else {
+            // Total scende: soldi su meno gol
+            const str = adT>=0.5?'FORTE':'DEBOLE';
+            picks.push({cat:'Under', pick:`Under 2.5`, note:`Total Down ${dTotal.toFixed(2)} → meno gol attesi`, fairOdd:fo(pUnder25), prob:pUnder25, icon:'⬇️', strength:str});
+            if (pNG>0.45&&adT>=0.4) picks.push({cat:'BTTS', pick:'NG (non entrambe segnano)', note:'Pochi gol = prob bassa BTTS', fairOdd:fo(pNG), prob:pNG, icon:'🔒', strength:'MEDIO'});
+        }
+    }
+
+    // ── Reverse: segnale contraddittorio → cautela ──
+    if (isReverse||isReverseA) {
+        picks.length=0;  // rimuovi tutti
+        const favoredTeam = isReverse?'Casa':'Trasf';
+        picks.push({cat:'CAUTELA', pick:`${favoredTeam} 1X (copertura pareggio)`, note:'Spread favorisce ma total scende: gol incerti', fairOdd:'—', prob:0, icon:'⚠️', strength:'INVERSO'});
+        picks.push({cat:'Under', pick:'Under 2.5', note:'Total scende nonostante il movimento spread', fairOdd:fo(pUnder25), prob:pUnder25, icon:'⬇️', strength:'MEDIO'});
+    }
+
+    // ── Consenso: spread + total stessa direzione → doppia conferma ──
+    if ((isReverse||isReverseA)===false && adS>=0.5 && adT>=0.4) {
+        if (dSpread<0 && dTotal>0) {
+            // Casa + Over: il pick più forte possibile
+            if (!picks.find(p=>p.cat==='Combo'))
+                picks.push({cat:'Combo', pick:'Casa + Over 2.5 (combo)', note:'Consenso totale: spread casa + more gol', fairOdd:'—', prob:0, icon:'🔥', strength:'CONSENSO'});
+        } else if (dSpread>0 && dTotal>0) {
+            if (!picks.find(p=>p.cat==='Combo'))
+                picks.push({cat:'Combo', pick:'Trasf + Over 2.5 (combo)', note:'Consenso totale: spread trasf + more gol', fairOdd:'—', prob:0, icon:'🔥', strength:'CONSENSO'});
+        }
+    }
+
+    return picks;
+}
+
+function hasSignificantSpread(adS, dSpread) { return adS>=0.5; }
+
+function updateSteam() {
+    const sO=getRaw('sO'),sC=getRaw('sC'),tO=getRaw('tO'),tC=getRaw('tC');
+    const tag=document.getElementById('steamTag'),det=document.getElementById('steamDetail');
+    const advBox=document.getElementById('steamAdvice');
+    if (sO===null||sC===null||tO===null||tC===null) {
+        tag.className='steam-tag steam-none'; tag.textContent='NESSUN DATO';
+        det.textContent='Inserisci spread e total apertura/corrente';
+        if (advBox) advBox.innerHTML='';
+        return;
+    }
+    const s=analyzeSteam(sO,sC,tO,tC);
+    const labels={none:'NESSUNO',weak:'DEBOLE',strong:'FORTE ⚡',reverse:'INVERSO ⚠️'};
+    const classes={none:'steam-none',weak:'steam-weak',strong:'steam-strong',reverse:'steam-reverse'};
+    tag.className='steam-tag '+classes[s.level]; tag.textContent=labels[s.level];
+    det.textContent=s.signals.length?s.signals.join(' · '):`ΔSpread:${s.dSpread.toFixed(2)} · ΔTotal:${s.dTotal.toFixed(2)} · Nessuna mossa significativa`;
+
+    // Renderizza advice pre-match
+    if (advBox) {
+        if (!s.advice||s.advice.length===0) { advBox.style.display='none'; return; }
+        const strengthColor={FORTE:'var(--matrix-green)',DEBOLE:'var(--gold)',MEDIO:'var(--kelly-blue)',INVERSO:'var(--ferrari-red)',CONSENSO:'var(--steam-color)'};
+        let html='<div class="steam-adv-title">📋 Pre-match Advice da Steam</div>';
+        s.advice.forEach(a=>{
+            const col=strengthColor[a.strength]||'var(--text-muted)';
+            const prob=a.prob>0?`<span style="color:var(--text-muted);font-size:0.8em">${(a.prob*100).toFixed(0)}%</span>`:'';
+            const fair=a.fairOdd&&a.fairOdd!=='—'?`<span style="color:var(--kelly-blue);font-size:0.85em;margin-left:2px;">@${a.fairOdd}</span>`:'';
+            html+=`<div class="steam-adv-row">
+                <span class="steam-adv-cat" style="color:${col}">${a.icon} ${a.cat}</span>
+                <span class="steam-adv-pick">${a.pick}</span>
+                ${fair}${prob}
+                <span class="steam-adv-note">${a.note}</span>
+                <span class="steam-adv-str" style="border-color:${col};color:${col}">${a.strength}</span>
+            </div>`;
+        });
+        advBox.innerHTML=html;
+        advBox.style.display='flex';
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  ORACLE VERDICT
+// ════════════════════════════════════════════════════════════════
+function generateAdvice(data) {
+    const bk = data.bookieOdds || {};
+    const conf = data.confidence || 0;
+    const min  = data.min || 0;
+    const hg   = data.currentHg || 0;
+    const ag   = data.currentAg || 0;
+    const goals= hg + ag;
+
+    // [V29 FIX 5] Confidence minima per dare consigli
+    // [V37] Usa Math.round per coerenza con il valore mostrato in UI
+    const confR = Math.round(conf);
+    const LOW_CONF = confR < 40;
+    // Modalità informativa: 40-54% mostrato (usa confR per coerenza con display)
+    const MID_CONF = confR >= 40 && confR < 55;
+    // [V29 FIX 6] Tempo scadente
+    const LATE_GAME = min > 85;
+    // [V29 FIX 2] Soglia GREEN adattiva: scende con confidence alta, sale con bassa
+    // range: conf=20 → 0.60, conf=50 → 0.58, conf=80 → 0.56, conf=88 → 0.555
+    // [FIX V32] GREEN_THRESH range più ampio: conf=20→0.602, conf=88→0.540 (era var 3.8%→ora 6.2%)
+    // [V37 P10] GREEN_THRESH: base confidence + aggiustamento VIX
+    const _vixAdj=clamp(((data.vix||50)-50)*0.001,-0.030,0.030);
+    const GREEN_THRESH = clamp(0.62 - (conf/88)*0.08 + _vixAdj, 0.52, 0.66);
+    const WATCH_THRESH = Math.max(0.48, GREEN_THRESH - 0.06);
+    const SPEC_THRESH  = Math.max(0.40, WATCH_THRESH - 0.10);
+
+    // [V29 FIX 1] Over 1.5 è informativo solo se ci sono già gol segnati
+    // Con score 0-0: Over 1.5 (finale) == Over dynOver (uguale threshold 1.5) → ridondante
+    // Con score 1-0+: Over 1.5 = P(>=1 altro gol) → mercato utile e diverso
+    const over15Useful = goals >= 1;
+    const over15Prob   = data.probs.Over15 || 0;
+    const under25Prob  = data.probs.Under25 || 0;
+    // Double Chance — utile quando score=0-0
+    const dc1X = data.probs.DC_1X || (data.probs['1']+data.probs['X']);
+    const dcX2 = data.probs.DC_X2 || (data.probs['2']+data.probs['X']);
+    const dc12 = data.probs.DC_12 || (data.probs['1']+data.probs['2']);
+
+    const markets = [
+        { id:'1',  name:'1 — Vittoria Casa',  p:data.probs['1'],    bkKey:'1'      },
+        { id:'X',  name:'X — Pareggio',        p:data.probs['X'],    bkKey:'X'      },
+        { id:'2',  name:'2 — Vittoria Trasf',  p:data.probs['2'],    bkKey:'2'      },
+        { id:'over', name:`Over ${data.dynOver}`, p:data.probs.O_Dyn, bkKey:'O_Dyn' },
+        { id:'btts', name:'BTTS Sì',           p:data.probs.BTTS,    bkKey:'BTTS'   },
+        // [V29 FIX 1] Over1.5 solo se utile, Double Chance se score=0-0
+        ...(over15Useful
+            ? [{ id:'over15',  name:'Over 1.5',   p:over15Prob,  bkKey:'O15' },
+               { id:'under25', name:'Under 2.5',  p:under25Prob, bkKey:'U25' }]
+            : [{ id:'dc1X', name:'1X (Dbl Chance)', p:dc1X, bkKey:null },
+               { id:'dcX2', name:'X2 (Dbl Chance)', p:dcX2, bkKey:null }]),
+    ];
+    // Prox Gol: solo se partita ancora aperta (goalDiff<=1)
+    const pH_c = data.probs.Next_H_c || 0;
+    const pA_c = data.probs.Next_A_c || 0;
+    const _goalDiffAdv = Math.abs((data.currentHg||0)-(data.currentAg||0));
+    if (_goalDiffAdv <= 1 && pH_c>0.005 && pA_c>0.005) {
+        if (pH_c>=pA_c) markets.push({id:'nextH',name:'Prox Gol Casa (cond.)',p:pH_c,bkKey:'Next_H_c'});
+        else            markets.push({id:'nextA',name:'Prox Gol Trasf (cond.)',p:pA_c,bkKey:'Next_A_c'});
+    }
+    // Con goalDiff>=2: aggiungi mercato Chasing (casa deve rimontare)
+    if (_goalDiffAdv >= 2) {
+        const _hg=data.currentHg||0, _ag=data.currentAg||0;
+        if (_hg < _ag && pH_c>0.01) {
+            // Casa insegue: prossimo gol casa è rilevante
+            markets.push({id:'nextH_chase',name:'Prox Gol Casa (rimonta)',p:pH_c,bkKey:'Next_H_c'});
+        }
+    }
+    if (data.htProbs) markets.push({id:'overHT',name:'Over 0.5 HT',p:data.htProbs.O,bkKey:null});
+
+    // [V40] Logica contesto-intelligente: filtra e riordina i mercati
+    // in base a score, minuto, vix, statistiche, tempo rimanente
+    (()=>{
+        const _hg=data.currentHg||0, _ag=data.currentAg||0;
+        const _min=data.min||0;
+        const _diff=Math.abs(_hg-_ag);
+        const _remMin=Math.max(1,90+(data.raw?.rec||0)-_min);
+        const _projH=parseFloat(data.projectedFinal?.pH||0);
+        const _projA=parseFloat(data.projectedFinal?.pA||0);
+        const _projTot=_projH+_projA;
+        const _vix=data.vix||50;
+        const _rcH=data.raw?.rcH||0, _rcA=data.raw?.rcA||0;
+        const _lastGoal=data.raw?.lastGoal||0;
+        const _btts=data.probs.BTTS||0;
+        const _pOver=data.probs.O_Dyn||0;
+        const _pOver25=data.probs.Over25||0;
+        const _pX=data.probs['X']||0;
+        const _p1=data.probs['1']||0, _p2=data.probs['2']||0;
+        const _isGT=data.isGarbageTime;
+
+        // Segna ogni mercato con un punteggio di rilevanza [0-10]
+        // e rimuove quelli irrilevanti per il contesto
+        markets.forEach(m=>{
+            let score=5; let remove=false; let reason='';
+
+            // ── Regola 1: mercati già decisi non giocabili ──────
+            // hardTraps gestite dopo — qui gestiamo i "quasi decisi" (p>0.90)
+            if(m.p>0.90||m.p<0.10) { score-=3; }
+
+            // ── Regola 2: 1X2 con score alto e partita quasi chiusa ──
+            if(['1','X','2'].includes(m.id)) {
+                // La squadra in svantaggio di 2+ gol tarda partita: improbabile rimonta
+                if(_diff>=2&&_min>70) { score-=4; reason='partita quasi chiusa'; }
+                // Con 3+ gol di scarto: inutile
+                if(_diff>=3) { remove=true; reason='partita chiusa 3+ gol'; }
+                // Pareggio con 2+ gol di differenza >70': quasi impossibile
+                if(m.id==='X'&&_diff>=2&&_min>65) { remove=true; reason='pareggio impossibile'; }
+            }
+
+            // ── Regola 3: Over/Under — coerenza con proiezione ──
+            if(m.id==='over') {
+                // Over dynOver: rilevante solo se proiezione ragionevole
+                if(_projTot<0.20&&_remMin<20) { score-=3; reason='pochi gol attesi'; }
+                // Con score già alto e garbage time: Over dynOver quasi impossibile
+                if(_isGT&&_pOver<0.10) { score-=4; }
+                // Con score 0-0 o 1-1: Over molto rilevante
+                if(_diff===0&&_hg+_ag<=1) { score+=2; }
+            }
+            if(m.id==='under25') {
+                // Under 2.5 con 3+ gol già: impossibile (già filtrata da p<0.005)
+                // Con score 1-1 o 2-0 >70': sotto è improbabile
+                if((_hg+_ag>=2)&&_min>70) { score-=3; }
+                // Con vix basso e score 0-0: Under rilevante
+                if(_vix<30&&_hg+_ag===0) { score+=2; }
+            }
+
+            // ── Regola 4: BTTS già realizzato o impossibile ──────
+            if(m.id==='btts') {
+                // BTTS già avvenuto (entrambi hanno segnato): inutile
+                if(_hg>0&&_ag>0) { remove=true; reason='BTTS già avvenuto'; }
+                // Fine partita con una squadra a 0: quasi impossibile
+                if(_min>80&&(_hg===0||_ag===0)&&_btts<0.10) { score-=4; }
+                // Partita vivace 0-0 >20': BTTS interessante
+                if(_hg===0&&_ag===0&&_vix>45&&_min>20) { score+=2; }
+            }
+
+            // ── Regola 5: Over 1.5 ────────────────────────────────
+            if(m.id==='over15') {
+                // Con 2+ gol già: Over 1.5 è certo (già filtrata)
+                if(_hg+_ag>=2) { remove=true; reason='Over 1.5 già avvenuto'; }
+                // Con 1 gol e partita avanzata: molto probabile — segnala
+                if(_hg+_ag===1&&_min>60&&m.p>0.80) { score+=1; }
+            }
+
+            // ── Regola 6: DC (Double Chance) ─────────────────────
+            if(['dc1X','dcX2','dc12'].includes(m.id)) {
+                // DC utile principalmente con score 0-0 o partita equilibrata
+                if(_diff>=2) { score-=2; }
+                // DC 12 (escludi pareggio) con score 0-0 e partita offensiva
+                if(m.id==='dc12'&&_hg===0&&_ag===0&&_vix>50) { score+=1; }
+            }
+
+            // ── Regola 7: ProxGol — già gestito, raffina ─────────
+            if(m.id==='nextH'||m.id==='nextH_chase') {
+                // Casa con cartellino rosso: difficile che segni
+                if(_rcH>=1) { score-=2; }
+                // Casa insegue, shock recente: più probabile
+                if(_hg<_ag&&_lastGoal>0&&(_min-_lastGoal)<10) { score+=2; }
+                // Partita bloccata (vix basso): ProxGol meno rilevante
+                if(_vix<25) { score-=1; }
+            }
+            if(m.id==='nextA') {
+                if(_rcA>=1) { score-=2; }
+                if(_ag<_hg&&_lastGoal>0&&(_min-_lastGoal)<10) { score+=2; }
+                if(_vix<25) { score-=1; }
+            }
+
+            // ── Regola 8: fine partita (<15' rimasti) ────────────
+            if(_remMin<=15) {
+                // Solo mercati con alta probabilità o forte edge
+                if(m.p<0.30&&!['nextH','nextA','nextH_chase'].includes(m.id)) { score-=2; }
+                // Tarda partita con vantaggio: risultato fisso più affidabile
+                if(_diff>=1&&['1','2'].includes(m.id)&&m.p>0.70) { score+=2; }
+            }
+
+            // ── Regola 9: partita bloccata (vix<25) ──────────────
+            if(_vix<25) {
+                if(['over','btts'].includes(m.id)) { score-=2; }
+                if(m.id==='under25') { score+=1; }
+            }
+
+            // ── Regola 10: alta intensità (vix>70) ───────────────
+            if(_vix>70) {
+                if(['over','btts','nextH','nextA'].includes(m.id)) { score+=1; }
+                if(m.id==='under25') { score-=2; }
+            }
+
+            // ── Regola 11: cartellino rosso ──────────────────────
+            if(_rcH>=1||_rcA>=1) {
+                const stronger=_rcA>=1?'1':'2';  // squadra con più uomini
+                if(m.id===stronger) { score+=2; }
+                // DC della squadra più numerosa
+                if(m.id==='dc1X'&&_rcA>=1) { score+=1; }
+                if(m.id==='dcX2'&&_rcH>=1) { score+=1; }
+            }
+
+            m._score = score;
+            m._remove = remove;
+            m._reason = reason;
+        });
+
+        // Rimuovi mercati marcati come irrilevanti
+        const before=markets.length;
+        for(let i=markets.length-1;i>=0;i--) {
+            if(markets[i]._remove) markets.splice(i,1);
+        }
+    })();
+
+        const hardTraps = markets.filter(m=>m.p>=0.9995);
+
+    const analyzed = markets
+        .filter(m=>m.p>0.005&&m.p<0.9995)
+        .map(m=>{
+            const fairOdd = parseFloat(calcFairOdd(m.p));
+            const bOdd    = m.bkKey && bk[m.bkKey] ? bk[m.bkKey] : null;
+            // [FIX V33] Edge usa fairOdd a 3 decimali (elimina inversioni da arrotondamento 2dec)
+            const fairOdd3p = m.p>0.005 ? 1/m.p : Infinity;
+            const edge    = bOdd ? ((m.p*bOdd-1)*100) : null;
+            const kelly_full = bOdd ? Math.max(0,((bOdd-1)*m.p-(1-m.p))/(bOdd-1)) : null;
+            const kellyFracVal = parseFloat(document.getElementById('kellyFrac')?.value)||0.25;
+            // [V37 P9] Kelly × confidence: con dati scarsi si scommette meno
+            // kelly_adj = kelly × frac × (conf/100) — automaticamente ridotto con confidence bassa
+            const kelly = kelly_full!==null ? kelly_full*kellyFracVal*(clamp(conf,30,100)/100) : null;
+            return {...m, fairOdd, bOdd, edge, kelly};
+        })
+        .sort((a,b)=>(b._score||5)-(a._score||5)||b.p-a.p);
+
+    // Coerenza DNB interna
+    const dnbH_is_trap = (data.probs.DNB_H||0) > 0.80;
+    const dnbA_is_trap = (data.probs.DNB_A||0) > 0.80;
+
+    // [V29 FIX 7] BTTS/Over correlazione: se diff < 8%, sopprimi il meno probabile
+    const pBTTS  = data.probs.BTTS  || 0;
+    const pOdyn  = data.probs.O_Dyn || 0;
+    const bttsCorrSuppressed = Math.abs(pBTTS-pOdyn) < 0.05 && pBTTS < pOdyn;  // [V32] 0.08→0.05
+    const overCorrSuppressed = Math.abs(pBTTS-pOdyn) < 0.05 && pOdyn < pBTTS;  // [V32] 0.08→0.05
+
+    function isEligible(m) {
+        // Under2.5 e Over1.5 possono essere validi anche con p>80% (logica inversa)
+        if (m.p > 0.80 && !EXCLUDE_FROM_TRAP.has(m.id)) return false;
+        if (m.p > 0.9995) return false;  // hardtrap comunque
+        if (m.id==='1' && dnbH_is_trap) return false;
+        if (m.id==='2' && dnbA_is_trap) return false;
+        if (m.id==='btts' && bttsCorrSuppressed) return false;
+        if (m.id==='over' && overCorrSuppressed) return false;
+        return true;
+    }
+
+    // [FIX V31] Under2.5 e Over1.5 NON vanno in TRAP anche se p>80%
+    // Con score 1-1@80' Under2.5=84% → è un pick solido, non un mercato bruciato
+    // La logica TRAP vale per 1X2 (più probabile = meno valore), NON per Under/Over bassa soglia
+    const EXCLUDE_FROM_TRAP = new Set(['under25','over15']);
+    const traps = analyzed.filter(m=>m.p>0.80 && !EXCLUDE_FROM_TRAP.has(m.id) && (m.edge===null || m.edge<5));
+
+    // [V29 FIX 2] Soglie adattive
+    const green = analyzed.filter(m=>{
+        if (!isEligible(m)) return false;
+        if (m.edge!==null) return m.edge>=3.0;
+        return m.p>=GREEN_THRESH && m.p<=0.80;
+    });
+    const watch = analyzed.filter(m=>{
+        if (!isEligible(m)||green.includes(m)) return false;
+        if (m.edge!==null) return m.edge>0&&m.edge<3.0;
+        return m.p>=WATCH_THRESH && m.p<GREEN_THRESH;
+    });
+    const spec = analyzed.filter(m=>{
+        if (!isEligible(m)||green.includes(m)||watch.includes(m)) return false;
+        if (m.edge!==null) return false;
+        return m.p>=SPEC_THRESH && m.p<WATCH_THRESH;
+    });
+    const negative = analyzed.filter(m=>m.edge!==null&&m.edge<0&&!traps.includes(m));
+
+    // [V29 FIX 4] topPick/altPick basati su probabilità assoluta, non solo zona
+    // Tutti i candidati validi ordinati per prob
+    const validCandidates = [...green, ...watch].sort((a,b)=>b.p-a.p);
+    const topPick  = validCandidates[0] || null;
+    const altPick  = validCandidates[1] || null;
+    // Spec pick: il più probabile tra spec, indipendente dall'ordine
+    const specPick = spec.length>0 ? [...spec].sort((a,b)=>b.p-a.p)[0] : null;
+
+    return { traps, green, watch, spec, negative, hardTraps,
+             topPick, altPick, specPick, all:analyzed,
+             LOW_CONF, MID_CONF, LATE_GAME, GREEN_THRESH, bttsCorrSuppressed, overCorrSuppressed };
+}
+
+function renderAdvice(data) {
+    const adv = generateAdvice(data);
+    const hasAnyBookie = adv.all.some(m=>m.bOdd!==null);
+    let html = `<div class="verdict-box"><div class="verdict-title">🎯 Oracle Verdict${hasAnyBookie?' — Edge Mode 📊':' — Fair Mode'}</div>`;
+
+    // [V29 FIX 5] Confidence bassa → blocca tutti i pick
+    // ── Modalità LOW_CONF (<40%): nessun consiglio ──────────────────
+    if (adv.LOW_CONF) {
+        html+=`<div class="verdict-empty">⏳ DATI INSUFFICIENTI (Conf ${data.confidence.toFixed(0)}%) — inserisci più dati per ricevere consigli affidabili.</div>`;
+        html+=`</div>`;
+        return html;
+    }
+
+    // ── Modalità MID_CONF (40-54%): informativa — solo probabilità, nessun pick operativo ──
+    if (adv.MID_CONF) {
+        const conf=data.confidence, probs=data.probs;
+        const agg=data.probs;
+        html+=`<div style="background:#0d0d00;border:1px solid var(--gold);border-radius:5px;padding:10px 14px;margin-bottom:8px">
+            <div style="color:var(--gold);font-weight:bold;font-size:0.80em;margin-bottom:6px">📊 MODALITÀ INFORMATIVA — Conf ${conf.toFixed(0)}% (soglia operativa: 55%)</div>
+            <div style="font-size:0.70em;color:#888;margin-bottom:8px">Dati presenti ma non ancora sufficienti per pick affidabili. Probabilità indicative (quote fair, non del tuo bookie):</div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px">
+                <div style="text-align:center;background:#111;padding:6px;border-radius:3px">
+                    <div style="color:#aaa;font-size:0.68em">P(1)</div>
+                    <div style="color:#fff;font-weight:bold">${((probs['1']||0)*100).toFixed(0)}%</div>
+                    <div style="color:#555;font-size:0.62em">@${calcFairOdd(probs['1']||0)}</div>
+                    ${data.confIntervals?`<div style="color:#333;font-size:0.58em">[${(data.confIntervals.p1.lo*100).toFixed(0)}-${(data.confIntervals.p1.hi*100).toFixed(0)}%]</div>`:''}
+                </div>
+                <div style="text-align:center;background:#111;padding:6px;border-radius:3px">
+                    <div style="color:#aaa;font-size:0.68em">P(X)</div>
+                    <div style="color:#fff;font-weight:bold">${((probs['X']||0)*100).toFixed(0)}%</div>
+                    <div style="color:#555;font-size:0.62em">@${calcFairOdd(probs['X']||0)}</div>
+                    ${data.confIntervals?`<div style="color:#333;font-size:0.58em">[${(data.confIntervals.pX.lo*100).toFixed(0)}-${(data.confIntervals.pX.hi*100).toFixed(0)}%]</div>`:''}
+                </div>
+                <div style="text-align:center;background:#111;padding:6px;border-radius:3px">
+                    <div style="color:#aaa;font-size:0.68em">P(2)</div>
+                    <div style="color:#fff;font-weight:bold">${((probs['2']||0)*100).toFixed(0)}%</div>
+                    <div style="color:#555;font-size:0.62em">@${calcFairOdd(probs['2']||0)}</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:8px">
+                ${((data.currentHg||0)+(data.currentAg||0))>=1?`
+                <div style="text-align:center;background:#0a1a0a;padding:5px;border-radius:3px;border:1px solid #1a3a1a">
+                    <div style="color:var(--matrix-green);font-size:0.65em">Over 1.5 fin.</div>
+                    <div style="color:#fff;font-weight:bold">${((probs.Over15||0)*100).toFixed(0)}%</div>
+                    <div style="color:#555;font-size:0.60em">@${calcFairOdd(probs.Over15||0)}</div>
+                </div>`:`
+                <div style="text-align:center;background:#111;padding:5px;border-radius:3px">
+                    <div style="color:#aaa;font-size:0.65em">Over 2.5</div>
+                    <div style="color:#fff;font-weight:bold">${((probs.O_Dyn||0)*100).toFixed(0)}%</div>
+                    <div style="color:#555;font-size:0.60em">@${calcFairOdd(probs.O_Dyn||0)}</div>
+                </div>`}
+                <div style="text-align:center;background:#111;padding:5px;border-radius:3px">
+                    <div style="color:#aaa;font-size:0.65em">BTTS</div>
+                    <div style="color:#fff;font-weight:bold">${((probs.BTTS||0)*100).toFixed(0)}%</div>
+                    <div style="color:#555;font-size:0.60em">@${calcFairOdd(probs.BTTS||0)}</div>
+                </div>
+            </div>
+            ${(probs.Next_H_c>0.01||probs.Next_A_c>0.01)?`
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
+                <div style="text-align:center;background:#0a1a0a;padding:5px;border-radius:3px;border:1px solid #1a3a1a">
+                    <div style="color:var(--matrix-green);font-size:0.65em">Prox⚽ Casa</div>
+                    <div style="color:#fff;font-weight:bold">${((probs.Next_H_c||0)*100).toFixed(0)}%</div>
+                    <div style="color:#555;font-size:0.60em">@${calcFairOdd(probs.Next_H_c||0)} cond.</div>
+                </div>
+                <div style="text-align:center;background:#1a0a0a;padding:5px;border-radius:3px;border:1px solid #3a1a1a">
+                    <div style="color:var(--ferrari-red);font-size:0.65em">Prox⚽ Trasf</div>
+                    <div style="color:#fff;font-weight:bold">${((probs.Next_A_c||0)*100).toFixed(0)}%</div>
+                    <div style="color:#555;font-size:0.60em">@${calcFairOdd(probs.Next_A_c||0)} cond.</div>
+                </div>
+            </div>`:''}
+            ${data.steam&&data.steam.level!=='none'?`<div style="font-size:0.66em;color:var(--chaos-orange);margin-top:4px">⚡ Steam ${data.steam.level==='strong'?'FORTE':'debole'}: ${data.steam.signals?.join(' · ')||''}</div>`:''}
+            <div style="font-size:0.62em;color:#444;margin-top:6px">Continua ad aggiornare i dati — a Conf 55%+ l'Oracle darà consigli operativi.</div>
+            <div style="margin-top:8px">
+                <div style="display:flex;justify-content:space-between;font-size:0.60em;color:#555;margin-bottom:3px">
+                    <span>Conf attuale: ${Math.round(conf)}%</span>
+                    <span style="color:var(--chaos-orange)">Mancano ${Math.max(0,55-Math.round(conf))} punti a modalità operativa</span>
+                </div>
+                <div style="background:#111;height:4px;border-radius:2px;overflow:hidden">
+                    <div style="height:100%;background:linear-gradient(90deg,var(--chaos-orange),var(--gold));width:${Math.min(100,Math.round(conf)/55*100).toFixed(0)}%;transition:width 0.3s"></div>
+                </div>
+            </div>
+        </div>`;
+        html+=`</div>`;
+        return html;
+    }
+    // [V29 FIX 6] Tempo scadente → avviso prominente
+    if (adv.LATE_GAME) {
+        html+=`<div class="verdict-sep"></div><div class="verdict-trap" style="font-size:0.72em;margin-bottom:4px;">
+            ⏱️ Partita agli sgoccioli (min ${data.min}') — poche opzioni rimaste.<br>
+            <span style="color:var(--gold);font-size:0.95em">💾 Dopo il fischio finale usa 📊 RIS. per salvare il risultato.</span>
+        </div>`;
+    }
+
+    if (adv.hardTraps.length>0) {
+        html+=`<div class="verdict-sep"></div><div class="verdict-trap" style="font-size:0.72em;margin-bottom:6px;">
+            🔒 GIÀ PREZZATO (p≈100%): ${adv.hardTraps.map(t=>t.name).join(' · ')} — non giocabile.
+        </div>`;
+    }
+    if (adv.negative.length>0) {
+        html+=`<div class="verdict-sep"></div><div class="verdict-trap" style="font-size:0.68em;margin-bottom:6px;">
+            ❌ EDGE NEGATIVO: ${adv.negative.map(m=>`${m.name} @${m.bOdd} (${m.edge.toFixed(1)}%)`).join(' · ')}
+        </div>`;
+    }
+    // Avviso correlazione soppressione
+    // [V36] BTTS/Over soppressi: mostra prob grigia come info
+    if (adv.bttsCorrSuppressed) {
+        const bp=(data.probs.BTTS||0);
+        html+=`<div style="font-size:0.62em;color:#444;margin-bottom:3px;">ℹ️ BTTS=${(bp*100).toFixed(0)}% @${calcFairOdd(bp)} — soppresso (correlato con Over)</div>`;
+    }
+    if (adv.overCorrSuppressed) {
+        const op=(data.probs.O_Dyn||0);
+        html+=`<div style="font-size:0.62em;color:#444;margin-bottom:3px;">ℹ️ Over=${(op*100).toFixed(0)}% @${calcFairOdd(op)} — soppresso (correlato con BTTS)</div>`;
+    }
+
+    const edgeBadge = (m) => {
+        if (m.edge===null) return '';
+        const col=m.edge>=5?'var(--matrix-green)':m.edge>=2?'var(--gold)':'var(--chaos-orange)';
+        const k=m.kelly?` k=${(m.kelly*100).toFixed(1)}%`:'';
+        return `<span style="font-size:0.72em;padding:2px 6px;border:1px solid ${col};color:${col};margin-left:4px;">EDGE ${m.edge>0?'+':''}${m.edge.toFixed(1)}%${k}</span>`;
+    };
+
+        // [V37 P3] Forza segnale
+    const signalStrength=(m,thresh)=>{
+        const dist=m.p-(thresh||adv.GREEN_THRESH);
+        if(dist>0.15||(m.edge!=null&&m.edge>=8)) return {label:'FORTE',col:'var(--matrix-green)'};
+        if(dist>0.07||(m.edge!=null&&m.edge>=4)) return {label:'MEDIO',col:'var(--gold)'};
+        return {label:'DEBOLE',col:'var(--chaos-orange)'};
+    };
+    if (adv.topPick) {
+        const tp=adv.topPick;
+        const minOdd=tp.bOdd?tp.bOdd:(tp.fairOdd*1.06).toFixed(2);
+        const topLabel=(tp.id==='under25'&&tp.p>0.80)||(tp.id==='over15'&&tp.p>0.80)?'🛡️ COPERTURA':'▶ TOP PICK';
+        const sig=signalStrength(tp);
+        html+=`<div class="verdict-pick">
+            <span class="verdict-badge badge-go">${topLabel}</span>
+            <span class="verdict-pick-name">${tp.name}</span>
+            <span style="font-size:0.62em;color:${sig.col};margin-left:4px;opacity:0.85">${sig.label}</span>
+            <span class="verdict-pick-odds">Fair @${tp.fairOdd}${tp.bOdd?` · Bookie @${tp.bOdd}`:''}</span>
+            ${edgeBadge(tp)}
+            <span class="verdict-pick-note">${tp.bOdd?`Edge confermato — gioca. P=${(tp.p*100).toFixed(0)}% fair @${tp.fairOdd}`:`P=${(tp.p*100).toFixed(0)}% · fair @${tp.fairOdd} · valore se ≥ @${minOdd}`}</span>
+        </div>`;
+    }
+    if (adv.altPick) {
+        const ap=adv.altPick;
+        html+=`<div class="verdict-pick">
+            <span class="verdict-badge badge-watch">◈ ALTERNATIVA</span>
+            <span class="verdict-pick-name">${ap.name}</span>
+            <span class="verdict-pick-odds">Fair @${ap.fairOdd}${ap.bOdd?` · Bookie @${ap.bOdd}`:''}</span>
+            ${edgeBadge(ap)}
+            <span class="verdict-pick-note">${ap.bOdd?`Edge ${ap.edge>=3?'ok':'marginale'}.`:`Solo ≥ @${(ap.fairOdd*1.07).toFixed(2)}`} · ${(ap.p*100).toFixed(0)}%</span>
+        </div>`;
+    }
+    if (!hasAnyBookie && adv.specPick) {
+        const sp=adv.specPick;
+        html+=`<div class="verdict-pick">
+            <span class="verdict-badge badge-spec">◇ SPEC</span>
+            <span class="verdict-pick-name">${sp.name}</span>
+            <span class="verdict-pick-odds">Fair @${sp.fairOdd}</span>
+            <span class="verdict-pick-note">Solo ≥ @${(sp.fairOdd*1.12).toFixed(2)} — alto rischio · ${(sp.p*100).toFixed(0)}%</span>
+        </div>`;
+    }
+    if (!adv.topPick&&!adv.altPick&&(!adv.specPick||hasAnyBookie)) {
+        const msg=hasAnyBookie?'⛔ Nessun edge positivo. Passa la mano.':'⛔ Nessun mercato nel range. Passa la mano.';
+        html+=`<div class="verdict-empty">${msg}</div>`;
+    }
+    if (adv.traps.length>0) {
+        html+=`<div class="verdict-sep"></div><div class="verdict-trap">🚫 BRUCIATO (p>80%): `;
+        html+=adv.traps.map(t=>`${t.name} @${t.fairOdd} (${(t.p*100).toFixed(0)}%)`).join(' · ')+'</div>';
+    }
+    // [V37 P1] Steam vs Oracle: segnala contraddizioni tra direzione steam e pick consigliato
+    if (adv.topPick && data.steam) {
+        const st=data.steam;
+        const dT=parseFloat(st.dTotal||0), dS=parseFloat(st.dSpread||0);
+        const tp=adv.topPick;
+        const steamDown=dT < -0.25, steamUp=dT > 0.25;
+        const steamCasa=dS < -0.5, steamTrasf=dS > 0.5;
+        const pickOver=tp.id==='over'||tp.id==='over15';
+        const pickUnder=tp.id==='under25';
+        const pick1=tp.id==='1', pick2=tp.id==='2';
+        const contrast=(steamDown&&pickOver)||(steamUp&&pickUnder)||(steamCasa&&pick2)||(steamTrasf&&pick1);
+        if(contrast) html+=`<div style="background:#1a0a00;border:1px solid var(--chaos-orange);border-radius:4px;padding:6px 10px;margin-top:6px;font-size:0.70em;color:var(--chaos-orange)">
+            ⚠️ CONTRASTO STEAM/ORACLE: il movimento delle linee (${dT>0?'+':''}${dT.toFixed(2)} total, ${dS>0?'+':''}${dS.toFixed(2)} spread) va nella direzione opposta al pick consigliato. Valuta con cautela.
+        </div>`;
+    }
+    // [V37 P4] BTTS vs Under2.5: se entrambi sono pick attivi con valori alti → avviso
+    if (adv.topPick && adv.altPick) {
+        const ids=[adv.topPick.id, adv.altPick.id];
+        const hasBTTS=ids.includes('btts');
+        const hasU25=ids.includes('under25');
+        if(hasBTTS && hasU25) {
+            const pBTTS=data.probs.BTTS||0, pU25=data.probs.Under25||0;
+            if(pBTTS>0.52 && pU25>0.65)
+                html+=`<div style="font-size:0.66em;color:var(--text-muted);margin-top:4px">ℹ️ BTTS e Under2.5 insieme: coerenti se il risultato più probabile è 1-1 (soddisfa entrambi)</div>`;
+        }
+    }
+    // [V29] Soglia adattiva info
+    const conf=data.confidence;
+    const confNote=conf<40?'⚠️ Bassa.':conf>70?'✅ Alta.':'📊 Media.';
+    // [V37 P6] Score Effect hint: se surpriseIdx alto, segnala mercati residui interessanti
+    let siHint='';
+    const si=parseFloat(data.metrics?.surpriseIdx||0);
+    if(si>3&&adv.topPick){
+        siHint=`<div style="font-size:0.64em;color:var(--gold);margin-bottom:3px">🎲 SCORE INATTESO (si=${si.toFixed(1)}): valuta mercati residui — Under/Over su base diversa</div>`;
+    }
+    // [V37 P7] Proiezione finale
+    const pf=data.projectedFinal;
+    const pfNote=pf?`<span style="color:#444;font-size:0.88em"> · proiez. ${pf.h}-${pf.a}</span>`:'';
+    const hr=data.historicalResidual;
+    const hrNote=hr?`<span style="color:#333;font-size:0.82em"> · storico: +${hr.avg}gol (${hr.n} casi)</span>`:'';
+    html+=`<div class="verdict-sep"></div>${siHint}
+        <div style="font-size:0.68em;color:#555;line-height:1.8;padding:2px 0">
+            <div>${confNote} <span style="color:var(--text-muted)">Affidabilità ${conf.toFixed(0)}%</span>${pfNote}</div>
+            ${hrNote?`<div>${hrNote}</div>`:''}
+            <div style="color:#444">Soglia operativa: ${(adv.GREEN_THRESH*100).toFixed(0)}%</div>
+        </div></div>`;
+    return html;
+}
+
+
+
+// ════════════════════════════════════════════════════════════════
+//  DROPDOWN & PERSISTENZA
+// ════════════════════════════════════════════════════════════════
+function updateDropdown() {
+    const db=getDB(),sel=document.getElementById('savedMatches');
+    sel.innerHTML='<option value="">-- Nuova Partita --</option>';
+    for (let m in db) sel.innerHTML+=`<option value="${m}">${m}</option>`;
+}
+// [V34 P10] Tracking accuratezza: salva risultato finale e calcola Brier score
+function saveMatchResult(matchName,finalScore){
+    const db=getDB();if(!db[matchName])return;
+    const pts=finalScore.split('-').map(Number);
+    if(pts.length!==2||pts.some(isNaN)){alert('Formato: 1-2');return;}
+    const[hgF,agF]=pts;
+    const last=db[matchName].history?.[0];if(!last){alert('Nessun scan trovato per questo match.');return;}
+    const probs=last.data?.probs||{};
+    const lastHg=last.data?.currentHg||0, lastAg=last.data?.currentAg||0;
+    const a1=hgF>agF?1:0,aX=hgF===agF?1:0,a2=hgF<agF?1:0;
+    const b1=((probs['1']||0)-a1)**2,bX=((probs['X']||0)-aX)**2,b2=((probs['2']||0)-a2)**2;
+    const bAvg=(b1+bX+b2)/3;
+    db[matchName].result={finalScore,savedAt:new Date().toISOString(),
+        brier:{p1:b1.toFixed(4),pX:bX.toFixed(4),p2:b2.toFixed(4),avg:bAvg.toFixed(4)}};
+    setDB(db);alert(`✅ Brier score: ${bAvg.toFixed(3)} (0=perfetto)`);
+}
+function saveCurrentMatch() {
+    // [V38] Normalizza nome: trim + spazi multipli → singolo spazio
+    const n=document.getElementById('matchName').value.trim().replace(/\s+/g,' '); if (!n) return;
+    try {
+    const db=getDB(); if (!db[n]) db[n]={pre:{},history:[]};
+    db[n].pre={sO:getSpread('sO'),sC:getSpread('sC'),tO:getSafeNum('tO',true),tC:getSafeNum('tC',true),isKnockout:document.getElementById('isKnockout').checked};
+    setDB(db);
+    document.getElementById('savedMatches').value=n;
+    // [V38] Feedback visivo dopo SALVA
+    const _btn=document.querySelector('.btn-save');
+    if(_btn){const _orig=_btn.textContent;_btn.textContent='✅ Salvato';_btn.style.color='var(--matrix-green)';setTimeout(()=>{_btn.textContent=_orig;_btn.style.color='';},1500);}
+    } catch(e) { alert('❌ Salvataggio fallito: ' + e.message); }
+    updatePersistStatus();
+}
+function deleteCurrentMatch() {
+    const n=document.getElementById('savedMatches').value; if (!n) return;
+    const db=getDB(); const m=db[n];
+    const nScans=m?.history?.length||0;
+    const hasResult=!!m?.result;
+    // [V39] Avvisa se ci sono dati di calibrazione da perdere
+    const warn=hasResult?' — contiene un risultato RIS. salvato utile per la calibrazione!':
+                nScans>3?` — contiene ${nScans} scan`:'';
+    if (confirm(`Eliminare "${n}"?${warn}\nQuesta operazione non è reversibile.`)) {
+        delete db[n]; setDB(db);
+        document.getElementById('matchName').value='';
+        document.getElementById('logContainer').innerHTML='';
+        updatePersistStatus();
+    }
+}
+function clearLiveFields() {
+    document.getElementById('lMin').value='0';
+    document.getElementById('lRec').value='0';
+    document.getElementById('lastGoal').value='0';
+    document.getElementById('lHg').value='0';
+    document.getElementById('lAg').value='0';
+    document.getElementById('rcH').value='0';
+    document.getElementById('rcA').value='0';
+    document.getElementById('sotH').value='0';
+    document.getElementById('misH').value='0';
+    document.getElementById('corH').value='0';
+    document.getElementById('daH').value='0';
+    document.getElementById('sotA').value='0';
+    document.getElementById('misA').value='0';
+    document.getElementById('corA').value='0';
+    document.getElementById('daA').value='0';
+    document.getElementById('possH').value='';
+    document.getElementById('possA').value='';
+    document.getElementById('bk1').value='';
+    document.getElementById('bkX').value='';
+    document.getElementById('bk2').value='';
+    document.getElementById('bkO').value='';
+    document.getElementById('bkB').value='';
+    document.getElementById('bkO15').value='';
+    document.getElementById('bkU25').value='';
+    document.getElementById('bkNH').value='';
+    updateSteam();
+}
+
+function loadSelectedMatch() {
+    const n=document.getElementById('savedMatches').value;
+    if (!n) { document.getElementById('matchName').value=''; document.getElementById('logContainer').innerHTML=''; clearLiveFields(); return; }
+    const db=getDB(),m=db[n];
+    document.getElementById('matchName').value=n;
+    clearLiveFields();
+    document.getElementById('sO').value=m.pre.sO??''; document.getElementById('sC').value=m.pre.sC??'';
+    document.getElementById('tO').value=m.pre.tO??''; document.getElementById('tC').value=m.pre.tC??'';
+    document.getElementById('isKnockout').checked=m.pre.isKnockout||false;
+    updateSteam(); renderHistory(n);
+}
+
+// ════════════════════════════════════════════════════════════════
+//  MOTORE PRINCIPALE V33
+// ════════════════════════════════════════════════════════════════
+function runOracleEngine(n, db) {
+    const min     = getSafeNum('lMin');
+    const rec     = clamp(getSafeNum('lRec'),0,15);
+    const hg      = getSafeNum('lHg');
+    const ag      = getSafeNum('lAg');
+    const lastGoal= getSafeNum('lastGoal');
+    const sotH=getSafeNum('sotH'),misH=getSafeNum('misH'),corH=getSafeNum('corH'),daH=getSafeNum('daH');
+    const sotA=getSafeNum('sotA'),misA=getSafeNum('misA'),corA=getSafeNum('corA'),daA=getSafeNum('daA');
+    const rcH=getSafeNum('rcH'), rcA=getSafeNum('rcA');
+    const tC=getSafeNum('tC',true)||2.5;
+    const sC=getSpread('sC'), sO=getSpread('sO');
+    const tO=getSafeNum('tO',true)||tC;
+    const isKO=document.getElementById('isKnockout').checked;
+    // [UPGRADE V25] Possesso opzionale (0-100, default 50)
+    const possH_raw=getSafeNum('possH'); const possA_raw=getSafeNum('possA');
+    // [BUG FIX V27] possA default: se nessun valore inserito → 50%, non 80%
+    // Vecchio: 100-possH_raw=100 quando possH_raw=0 → clamp(100,20,80)=80 ERRATO
+    const possH=clamp(possH_raw>0?possH_raw:50, 20, 80)/100;
+    const possA=clamp(possA_raw>0?possA_raw:(possH_raw>0?100-possH_raw:50), 20, 80)/100;
+
+    let alerts=[];
+    const safeMin=Math.max(1,min);
+
+    // ── Steam ──
+    const steam=analyzeSteam(sO,sC,tO,tC);
+    if (steam.level==='strong')        alerts.push({type:'steam',msg:`⚡ Movimento quote: ${steam.signals[0]}`});
+    else if (steam.level==='reverse')  alerts.push({type:'steam',msg:`🔄 Movimento contrario: ${steam.signals.find(s=>s.includes('INVERSO'))||steam.signals[0]}`});
+    else if (steam.level==='weak'&&steam.signals.length) alerts.push({type:'info',msg:`📊 Quote in movimento: ${steam.signals[0]}`});
+    steam.signals.slice(1).forEach(s=>{
+        if (s.includes('INVERSO')||s.includes('CONSENSO'))
+            alerts.push({type:steam.level==='reverse'?'steam':'tactical',msg:s});
+    });
+
+    // [UPGRADE V25] Prior pre-match: usa tC e sC per definire il punto di attrazione
+    // [FIX V32] VIG 1.05→1.025: per linee Asian sharp (Pinnacle/SBO) il vig è ~2.5%
+    // Con 1.05 su linee sharp si sottostima il prior del +2.5% inutilmente
+    const tC_adj = tC / 1.025;
+    const priorH = Math.max(0.15,(tC_adj-sC)/2)/90;
+    const priorA = Math.max(0.15,(tC_adj+sC)/2)/90;
+
+    // ── xG Rate live (con prior pre-match e conversion quality) ──
+    // [FIX V33] sampleW separato H/A: i tiri avversari non qualificano blend della casa
+    // [FIX V36] Usa sotH+misH direttamente (tsH dichiarata più avanti → TDZ error)
+    const sampleWH = clamp(((sotH+misH) + daH*0.10)/12, 0, 1);
+    const sampleWA = clamp(((sotA+misA) + daA*0.10)/12, 0, 1);
+    let xgRateH = Math.min((calcXgObs(sotH,misH,daH)/safeMin)*sampleWH + priorH*(1-sampleWH), 3.5/90);
+    let xgRateA = Math.min((calcXgObs(sotA,misA,daA)/safeMin)*sampleWA + priorA*(1-sampleWA), 3.5/90);
+    xgRateH*=pressureFactor(corH,sotH,misH,safeMin);
+    xgRateA*=pressureFactor(corA,sotA,misA,safeMin);
+
+    // [UPGRADE V25] Possesso modifier: mismatch tra poss e conversion quality
+    // Alto possesso + bassa conversion = "possesso sterile" → leggera riduzione
+    // Basso possesso + alta conversion = "counter letale" → leggero aumento
+    // Range: ±8%, applicato PRIMA del blend per non distorcere troppo
+    const tsH=sotH+misH, tsA=sotA+misA;
+    // [V39] convRate clampato a [0.20,0.80]: evita distorsioni quando misH=0
+    // (senza miss, sotH/tsH=1.0 sempre → possesso modifier al massimo)
+    const convRateH=tsH>0?clamp(sotH/tsH,0.20,0.80):0.50;
+    const convRateA=tsA>0?clamp(sotA/tsA,0.20,0.80):0.50;
+    // [FIX V32] possesso factor 0.25→0.35 (dati: sterile/counter diff ~20-25%)
+    const possModH_raw=clamp(1.0+(convRateH-possH)*0.35, 0.85, 1.15);
+    const possModA_raw=clamp(1.0+(convRateA-possA)*0.35, 0.85, 1.15);
+    // [FIX V30] Normalizza: mH*lH + mA*lA deve restare uguale al total pre-poss
+    // Senza normalizzazione il total implicito cambia fino al 2.5%
+    // [V35] possModH applicato direttamente (no _possScale): la scala era calcolata su xgRate
+    // ma il modifier va su lambdaH (post-blend) — scale diverse → incoerenza rimossa
+    const possModH=possModH_raw;
+    const possModA=possModA_raw;
+    // [FIX V33] possModH/A non applicati a xgRate qui — verranno applicati dopo il blend
+    // Ragione: il prior pre-match non include il fattore possesso
+    // Applicare possesso a xgRate e poi blendare con prior non-modificato è incoerente
+    // Alert usa modifier RAW (prima della normalizzazione)
+    // Dopo la norm il modifier può scendere sotto soglia anche se il segnale c'è
+    if (possModH_raw<0.92&&possH>0.58) alerts.push({type:'tactical',msg:`La casa ha il ${Math.round(possH*100)}% del pallone ma non tira — possesso senza pericolosità.`});
+    if (possModA_raw<0.92&&possA>0.58) alerts.push({type:'tactical',msg:`La trasferta ha il ${Math.round(possA*100)}% del pallone ma non tira — possesso senza pericolosità.`});
+    if (possModH_raw>1.06&&possH<0.42) alerts.push({type:'chaos',msg:`La casa tira molto pur avendo poco possesso — attacco efficace in contropiede.`});
+    if (possModA_raw>1.06&&possA<0.42) alerts.push({type:'chaos',msg:`La trasferta tira molto pur avendo poco possesso — attacco efficace in contropiede.`});
+
+    // ── Momentum da history + [UPGRADE V25] Trend xgRate ──
+    let paceH=0,paceA=0,mSamples=0;
+    let trendBoostH=1.0, trendBoostA=1.0;
+    if (db[n]?.history?.length>0) {
+        const prevScans=db[n].history.filter(h=>h.data?.raw?.min<min&&h.data?.raw?.min>0).slice(0,3);
+        // [V28] Pesi esponenziali: scan più recente pesa di più (1.0, 0.5, 0.25)
+        const expWeights=[1.0, 0.5, 0.25];
+        prevScans.forEach((h,i)=>{
+            const ls=h.data.raw, dMin=min-ls.min;
+            if (dMin>1&&dMin<20) { const w=expWeights[i]||0.125; paceH+=clamp(((daH-ls.daH)/dMin)*90,0,60)*w; paceA+=clamp(((daA-ls.daA)/dMin)*90,0,60)*w; mSamples+=w; }
+        });
+        if (mSamples>0) { paceH/=mSamples; paceA/=mSamples; }
+
+        // [V27] Trend: richiede >=3 scan (era >=2 — 2 punti non definiscono un trend)
+        // Con 2 punti la slope è solo differenza punto-punto, rumore puro
+        if (prevScans.length>=3) {
+            // [FIX V33] Trend usa xgRateH (blend stabile) invece di xgObsH/min
+            // xgObs/min scende col tempo (diluizione) dando falsi trend negativi
+            const ratesH=prevScans.map(h=>({m:h.data.raw.min, r:parseFloat(h.data.raw.xgRateH||0)||parseFloat(h.data.raw.xgObsH||0)/Math.max(1,h.data.raw.min)})).filter(d=>d.r>0&&d.m>0);
+            const ratesA=prevScans.map(h=>({m:h.data.raw.min, r:parseFloat(h.data.raw.xgRateA||0)||parseFloat(h.data.raw.xgObsA||0)/Math.max(1,h.data.raw.min)})).filter(d=>d.r>0&&d.m>0);
+            const linSlope=(pts)=>{
+                if (pts.length<2) return 0;
+                const n=pts.length,sx=pts.reduce((s,p)=>s+p.m,0),sy=pts.reduce((s,p)=>s+p.r,0);
+                const sxy=pts.reduce((s,p)=>s+p.m*p.r,0),sxx=pts.reduce((s,p)=>s+p.m*p.m,0);
+                const d=n*sxx-sx*sx; return d!==0?(n*sxy-sx*sy)/d:0;
+            };
+            const slopeH=linSlope(ratesH), slopeA=linSlope(ratesA);
+            // Normalizza e limita a ±10%
+            trendBoostH=clamp(1.0+slopeH/(MEAN_GOALS_PER_MIN/45)*0.10, 0.90, 1.10);
+            trendBoostA=clamp(1.0+slopeA/(MEAN_GOALS_PER_MIN/45)*0.10, 0.90, 1.10);
+            if (trendBoostH>1.06) alerts.push({type:'tactical',msg:`La casa sta crescendo nel tempo — ritmo offensivo in aumento.`});
+            if (trendBoostH<0.94) alerts.push({type:'tactical',msg:`La casa sta calando nel tempo — ritmo offensivo in diminuzione.`});
+            if (trendBoostA>1.06) alerts.push({type:'tactical',msg:`La trasferta sta crescendo nel tempo — ritmo offensivo in aumento.`});
+            if (trendBoostA<0.94) alerts.push({type:'tactical',msg:`La trasferta sta calando nel tempo — ritmo offensivo in diminuzione.`});
+        }
+    }
+    if (paceH>40) alerts.push({type:'tactical',msg:'🔥 La casa mantiene un buon ritmo offensivo — continua a creare occasioni'});
+    if (paceA>40) alerts.push({type:'tactical',msg:'🔥 La trasferta mantiene un buon ritmo offensivo — continua a creare occasioni'});
+
+    // ── Lambda pre-match da linee (con tC vig-adjusted) ──
+    let hXG_pre=Math.max(0.15,(tC_adj-sC)/2)*steam.lambdaMod.h;
+    let aXG_pre=Math.max(0.15,(tC_adj+sC)/2)*steam.lambdaMod.a;
+
+    // ── Blend sigmoid ──
+    // [V40 M1] Blend separato H e A: ogni squadra usa il proprio sampleW
+    const wH=Math.max(sigmoidWeight(min), sampleWH);
+    const wA=Math.max(sigmoidWeight(min), sampleWA);
+    let lambdaH=clamp(hXG_pre*(1-wH)+xgRateH*90*wH, 0.10, 3.5);
+    let lambdaA=clamp(aXG_pre*(1-wA)+xgRateA*90*wA, 0.10, 3.5);
+    // [FIX V33] Possesso applicato DOPO il blend: il prior pre-match non ha il fattore possesso
+    // Applicarlo a xgRate prima del blend creava un'asimmetria (live modificato, prior no)
+    lambdaH=clamp(lambdaH*possModH, 0.10, 3.5);
+    lambdaA=clamp(lambdaA*possModA, 0.10, 3.5);
+    // [FIX V23] Steam NON riapplicato al lambda blended
+
+    // [UPGRADE V25] Applica trend boost post-blend (conservativo: max ±10%)
+    lambdaH=clamp(lambdaH*trendBoostH, 0.10, 3.5);
+    lambdaA=clamp(lambdaA*trendBoostA, 0.10, 3.5);
+
+    const baseLambdaH=lambdaH, baseLambdaA=lambdaA;
+
+    // ── Palle inattive ──
+    // [FIX V30] Usa corner/10 min invece di ratio assoluta corH > tsH*1.5
+    // Vecchio: 3 corner a 80' scattava (cor>0*1.5), 6 corner a 20' non scattava
+    // Nuovo: ts==0 AND cor>0 → solo palle inattive; oppure cor_rate > 2.0 corner/10'
+    // [V35] max(2,min/10): evita spike a inizio partita (denominatore minimo 2)
+    const corRateH = corH/Math.max(2,safeMin/10);
+    const corRateA = corA/Math.max(2,safeMin/10);
+    // [FIX V33] Palle inattive: riduzione proporzionale all'intensità corner (era fissa ×0.72)
+    // Più corner = più riduzione: base 0.72 per alta intensità, 0.92 per bassa
+    if (min>30 && (tsH===0&&corH>0 || corRateH>2.0)) {
+        const palleRedH=clamp(0.72+(1-0.72)*Math.max(0,1-corRateH/3), 0.72, 0.92);
+        lambdaH*=palleRedH; alerts.push({type:'tactical',msg:`La casa è pericolosa quasi solo su calci piazzati — poco gioco da azione.`});
+    }
+    if (min>30 && (tsA===0&&corA>0 || corRateA>2.0)) {
+        const palleRedA=clamp(0.72+(1-0.72)*Math.max(0,1-corRateA/3), 0.72, 0.92);
+        lambdaA*=palleRedA; alerts.push({type:'tactical',msg:`La trasferta è pericolosa quasi solo su calci piazzati — poco gioco da azione.`});
+    }
+
+    const xqH=xgRateH*safeMin, xqA=xgRateA*safeMin;  // blend con prior (per display)
+    // [V27] xG osservato puro — usato per karma/sfortuna e mostrato come xQ
+    // [V34 P2] Qualità posizione: alto DA/SoT ratio → attacchi periferici → xG implicito minore
+    const _daRH=tsH>0?daH/tsH:3.0, _daRA=tsA>0?daA/tsA:3.0;
+    const _posQH=clamp(1.0-(_daRH-2.0)*0.03,0.88,1.08);
+    const _posQA=clamp(1.0-(_daRA-2.0)*0.03,0.88,1.08);
+    const xgObsPureH=calcXgObs(sotH,misH,daH);
+    const xgObsPureA=calcXgObs(sotA,misA,daA);
+
+    // [FIX V26+V30] Karma Portiere: soglie su SoT/90 con hg<=1 (attenuato)
+    // V29: karma solo con hg==0 — con 1-0 e 20SoT/90 il portiere è ancora fenomenale
+    // V30: hg==0 → moltiplicatori pieni; hg==1 → attenuati (0.73/0.82/0.88)
+    const sotH_per90=sotH/safeMin*90;
+    const sotA_per90=sotA/safeMin*90;
+    // [FIX V32] Karma attenuato: con pochi minuti rimasti il karma pesa meno
+    const maxTimeKarma=90+rec; const remMinKarma=Math.max(1,maxTimeKarma-min);
+    const karmaFactor=(base)=>clamp(base+(1-base)*(1-remMinKarma/90)*0.30, base, 1.0);
+    // Applica karma casa (attacca trasf, portiere casa):
+    if (sotH>0&&hg<=1&&min>=20) {
+        const attenH = hg===1 ? 0.88 : 1.0;  // attenuato se già segnato
+        if      (sotH_per90>=20) { lambdaH*=karmaFactor(0.60)*attenH; alerts.push({type:'tactical',msg:`Il portiere della trasferta sta parando tutto — la casa tira molto ma non segna.`}); }
+        else if (sotH_per90>=13) { lambdaH*=karmaFactor(0.70)*attenH; alerts.push({type:'tactical',msg:`Il portiere della trasferta sta tenendo bene — la casa tira ma fatica a segnare.`}); }
+        else if (sotH_per90>=9&&sotH>=5) { lambdaH*=karmaFactor(0.80)*attenH; alerts.push({type:'tactical',msg:`Il portiere della trasferta è attento — buon numero di tiri subiti senza concedere.`}); }
+        else if (hg===0) {
+            const convH=tsH>0?sotH/tsH:0;
+            if (tsH>=10&&convH<0.40) { lambdaH*=1.20; alerts.push({type:'chaos',msg:'La casa tira molto ma non segna — potrebbe essere sfortuna o il portiere avversario in grande giornata.'}); }
+        }
+    } else if (hg===0&&min>=20) {
+        const convH=tsH>0?sotH/tsH:0;
+        if (tsH>=10&&convH<0.40) { lambdaH*=1.20; alerts.push({type:'chaos',msg:'La casa tira molto ma non segna — potrebbe essere sfortuna o il portiere avversario in grande giornata.'}); }
+    }
+    if (sotA>0&&ag<=1&&min>=20) {
+        const attenA = ag===1 ? 0.88 : 1.0;
+        if      (sotA_per90>=20) { lambdaA*=karmaFactor(0.60)*attenA; alerts.push({type:'tactical',msg:`Il portiere della casa sta parando tutto — la trasferta tira molto ma non segna.`}); }
+        else if (sotA_per90>=13) { lambdaA*=karmaFactor(0.70)*attenA; alerts.push({type:'tactical',msg:`Il portiere della casa sta tenendo bene — la trasferta tira ma fatica a segnare.`}); }
+        else if (sotA_per90>=9&&sotA>=5) { lambdaA*=karmaFactor(0.80)*attenA; alerts.push({type:'tactical',msg:`Il portiere della casa è attento — buon numero di tiri subiti senza concedere.`}); }
+        else if (ag===0) {
+            const convA=tsA>0?sotA/tsA:0;
+            if (tsA>=10&&convA<0.40) { lambdaA*=1.20; alerts.push({type:'chaos',msg:'La trasferta tira molto ma non segna — potrebbe essere sfortuna o il portiere avversario in grande giornata.'}); }
+        }
+    } else if (ag===0&&min>=20) {
+        const convA=tsA>0?sotA/tsA:0;
+        if (tsA>=10&&convA<0.40) { lambdaA*=1.20; alerts.push({type:'chaos',msg:'La trasferta tira molto ma non segna — potrebbe essere sfortuna o il portiere avversario in grande giornata.'}); }
+    }
+
+    // ── Scoreline effects ──
+    const goalDiff=hg-ag;
+    // [V34 P3] Gioco bloccato (alert only)
+    const _tsHr=tsH/Math.max(1,safeMin)*90,_tsAr=tsA/Math.max(1,safeMin)*90;
+    const _daHr=daH/Math.max(1,safeMin)*90,_daAr=daA/Math.max(1,safeMin)*90;
+    if(hg>ag&&min>35&&_tsHr<7&&_daHr<10) alerts.push({type:'tactical',msg:`La casa sta gestendo il vantaggio ${hg}-${ag} — pochi tiri, difende il risultato.`});
+    if(ag>hg&&min>35&&_tsAr<7&&_daAr<10) alerts.push({type:'tactical',msg:`La trasferta sta gestendo il vantaggio ${ag}-${hg} — pochi tiri, difende il risultato.`});
+    // [FIX V22] Garbage time dinamico: >=3 sempre, >=2 se min>80
+    const isGarbageTime=(Math.abs(goalDiff)>=3)||(Math.abs(goalDiff)>=2&&min>80);
+
+    if (isGarbageTime) {
+        // [FIX V26] Garbage asimmetrico
+        if      (goalDiff>0) { lambdaH*=0.55; lambdaA*=0.85; }
+        else if (goalDiff<0) { lambdaA*=0.55; lambdaH*=0.85; }
+        else                 { lambdaH*=0.65; lambdaA*=0.65; }
+        alerts.push({type:'chaos',msg:'La partita è in garbage time — la squadra in vantaggio non attacca più.'});
+    } else {
+        // [V27] RIMOSSA la "Gestione" (×0.75 se goalDiff>0 e sC<-0.25):
+        // L'informazione è già contenuta nel pre-match lambda (sC basso → lH alto)
+        // Applicarla di nuovo crea un double-counting dello stesso segnale.
+
+        // [FIX V26] Post-goal shock: decadimento esponenziale
+        // [V35] Guard: lastGoal<=0 (campo vuoto) non deve generare shock
+        const isPostGoalShock=lastGoal>0&&lastGoal<min&&(min-lastGoal)>=1&&min<85;
+        if (isPostGoalShock) {
+            const delta=min-lastGoal;
+            const shockMult=1.0+0.32*Math.exp(-0.22*(delta-1));  // [V32] peak 0.28→0.32 (+35% dati reali)
+            if      (goalDiff>0) { lambdaH*=Math.max(1.0,shockMult*0.90); lambdaA*=shockMult; }
+            else if (goalDiff<0) { lambdaA*=Math.max(1.0,shockMult*0.90); lambdaH*=shockMult; }
+            else                 { lambdaH*=shockMult*0.92; lambdaA*=shockMult*0.92; }
+            if (delta<=4) alerts.push({type:'chaos',msg:`Gol appena segnato al ${lastGoal}' — la squadra che ha subito il gol tende a spingere di più subito dopo.`});
+            else if (delta<=8) alerts.push({type:'chaos',msg:`Gol recente al ${lastGoal}' — ancora possibile reazione dalla squadra che lo ha subito.`});
+        } else {
+            // [FIX V22] Chasing: applicato anche in KO (con fattore più alto perché DEVONO segnare)
+            if (isKO) {
+                // [FIX V30] KO chasing proporzionale al gap: più gol mancano → boost maggiore
+                // boost = 1.15 + |goalDiff| * 0.12, cap 1.55
+                const koBoost = Math.min(1.15 + Math.abs(goalDiff)*0.12, 1.55);
+                if      (goalDiff>0) { lambdaA*=koBoost; alerts.push({type:'chaos',msg:`La trasferta è sotto di ${goalDiff} gol — deve attaccare per forza, aspettati più ritmo.`}); }
+                else if (goalDiff<0) { lambdaH*=koBoost; alerts.push({type:'chaos',msg:`La casa è sotto di ${Math.abs(goalDiff)} gol — deve attaccare per forza, aspettati più ritmo.`}); }
+            } else {
+                // [FIX V32] Chasing scala con minuto: a min=20 boost minore (squadra non ancora in
+                // modalità chasing piena), a min=80 boost quasi pieno
+                // 1.10 + 0.12*(min/90) → range [1.10, 1.22]
+                const chasingMult = clamp(1.10 + 0.12*(min/90), 1.10, 1.22);
+                if (goalDiff>0) lambdaA*=chasingMult;
+                else if (goalDiff<0) lambdaH*=chasingMult;
+            }
+        }
+
+        // KO pareggio teso (aggiunge ulteriore boost bilaterale)
+        if (isKO&&goalDiff===0&&min>60) {
+            lambdaH*=1.20; lambdaA*=1.20;
+            alerts.push({type:'chaos',msg:'Partita KO: è parità — entrambe devono segnare, ritmo più alto.'});
+        }
+    }
+
+    // ── Cartellino rosso ──
+    // [BUG FIX V27] rd era invertito: rosso al 5' aveva meno effetto (0.40) di uno all'80' (1.0)
+    // Corretto: rd scala con il TEMPO RIMANENTE — rosso early = più impatto
+    // rd = clamp((90-min)/90, 0.15, 1.0): al 5'=0.94, al 45'=0.50, all'80'=0.15
+    const rd=clamp((90-min)/90, 0.15, 1.0);
+    // [V35] Rosso proporzionale: 2 espulsi = doppio effetto (cap 2), stesso schema h/a
+    if (rcH>0) {
+        const rcBoostH=Math.min(rcH,2)*0.35;
+        if (hg>ag) { lambdaH*=(1-Math.min(rcH,2)*0.40*rd); lambdaA*=(1-Math.min(rcH,2)*0.10*rd); alerts.push({type:'tactical',msg:`La casa ha ${Math.min(rcH,2)} uomo(i) in meno — si difende, difficile che segni.`}); }
+        else        { lambdaH*=(1-Math.min(rcH,2)*0.10*rd); lambdaA*=clamp(1+rcBoostH*rd,1.0,1.65); alerts.push({type:'chaos',   msg:`La casa ha ${Math.min(rcH,2)} uomo(i) in meno — la trasferta ha più spazio per attaccare.`}); }
+    }
+    if (rcA>0) {
+        const rcBoostA=Math.min(rcA,2)*0.35;
+        if (ag>hg) { lambdaA*=(1-Math.min(rcA,2)*0.40*rd); lambdaH*=(1-Math.min(rcA,2)*0.10*rd); alerts.push({type:'tactical',msg:`La trasferta ha ${Math.min(rcA,2)} uomo(i) in meno — si difende, difficile che segni.`}); }
+        else        { lambdaA*=(1-Math.min(rcA,2)*0.10*rd); lambdaH*=clamp(1+rcBoostA*rd,1.0,1.65); alerts.push({type:'chaos',   msg:`La trasferta ha ${Math.min(rcA,2)} uomo(i) in meno — la casa ha più spazio per attaccare.`}); }
+    }
+
+    // ── Soft cap ──
+    // [FIX V30] Soglia abbassata 1.65→1.55: cattura cascate più moderate
+    if (lambdaH/baseLambdaH>1.55) lambdaH=baseLambdaH*(1.55+(lambdaH/baseLambdaH-1.55)*0.3);
+    if (lambdaA/baseLambdaA>1.55) lambdaA=baseLambdaA*(1.55+(lambdaA/baseLambdaA-1.55)*0.3);
+    lambdaH=clamp(lambdaH,0.05,3.5); lambdaA=clamp(lambdaA,0.05,3.5);
+    // [V34 P2] Applica position quality dopo softcap
+    lambdaH=clamp(lambdaH*_posQH,0.05,3.5); lambdaA=clamp(lambdaA*_posQA,0.05,3.5);
+
+    // ── Proiezione gol rimanenti ──
+    const maxTime=90+rec, remMin=Math.max(1,maxTime-min);
+    let projH=0,projA=0;
+    for (let m=0;m<remMin;m++) { const r=rhythmCurve(min+m); projH+=(lambdaH/90)*r; projA+=(lambdaA/90)*r; }
+    projH=clamp(projH,0,6.0); projA=clamp(projA,0,6.0);
+
+    const naked_xGH=(hg+projH).toFixed(2);
+    const naked_xGA=(ag+projA).toFixed(2);
+
+    // ── Matrix (gol AGGIUNTIVI rispetto allo score attuale) ──
+    const matrix=buildResultMatrix(projH,projA,min);
+    const agg=aggregateFromMatrix(matrix,hg,ag);
+
+    // [FIX V22] pGoal estratto dalla matrice DC (non da Poisson puro)
+    const p00_dc=matrix.find(c=>c.h===0&&c.a===0)?.p||0;
+    const pGoal=1-p00_dc;
+    const totalProj=projH+projA;
+
+    // [FIX V22] Next Goal: probabilità CONDIZIONALE (chi segna il prossimo GOL se ci sarà)
+    // Usata per il mercato "Prossimo Marcatore" — next_H + next_A = 1.0
+    const nextH_cond=totalProj>0?projH/totalProj:0;
+    const nextA_cond=totalProj>0?projA/totalProj:0;
+    // Probabilità ASSOLUTA (usata per VIX/info): include prob che non ci siano più gol
+    const nextH_abs=nextH_cond*pGoal;
+    const nextA_abs=nextA_cond*pGoal;
+
+    const dynOver=hg+ag+1.5;
+    const pBTTS=agg.pBTTS;
+
+    // ── Extra time ──
+    let etProbs=null;
+    if (isKO&&goalDiff===0&&min>=88) { etProbs=simulateExtraTime(lambdaH,lambdaA); alerts.push({type:'chaos',msg:'Tempi supplementari simulati — calcolo su 120 minuti totali.'}); }
+
+    // ── Analisi primo tempo ──
+    let htProbs=null;
+    if (min<=45) {
+        // [FIX V33] HT usa lambda conservativo senza shock/karma
+        const lHT_H=clamp(hXG_pre*0.60+xgRateH*90*0.40,0.10,3.5);
+        const lHT_A=clamp(aXG_pre*0.60+xgRateA*90*0.40,0.10,3.5);
+        const remHT=Math.max(1,45+rec-min);
+        let htProjH=0,htProjA=0;
+        for (let m=0;m<remHT;m++) { const r=rhythmCurve(min+m); htProjH+=(lHT_H/90)*r; htProjA+=(lHT_A/90)*r; }
+        htProjH=clamp(htProjH,0,3.5); htProjA=clamp(htProjA,0,3.5);
+        const htMat=buildResultMatrix(htProjH,htProjA,min);
+        const htAgg=aggregateFromMatrix(htMat,hg,ag);
+        const htOver=htMat.filter(c=>(c.h+c.a)>=1).reduce((s,c)=>s+c.p,0);
+        htProbs={'1':htAgg.p1,'X':htAgg.pX,'2':htAgg.p2,'O':htOver};
+    }
+
+    // ── VIX ──
+    // [FIX V30] Algoritmo unificato: sempre (xgRateH+xgRateA)/2 / MEAN_GPM * 50
+    // V29 usava due algoritmi diversi (DA-based con scan, xG-based senza) → incomparabili
+    // Ora: xgRate include già il blend live/prior → VIX coerente tra scan
+    // [FIX V33+PATCH] VIX scala con confidence — calcolo inline di shotS/daS
+    // Non usa le variabili shotS/daS definite più avanti; le calcola qui autonomamente
+    const vix_raw = clamp((xgRateH+xgRateA)/2/MEAN_GOALS_PER_MIN*50, 10, 95);
+    const vix_shotS_proxy = clamp((tsH+tsA)/26, 0, 1);
+    const vix_daS_proxy   = clamp((daH+daA)/60, 0, 1);
+    const vix_data_proxy  = vix_shotS_proxy*0.80 + vix_daS_proxy*0.20;
+    const vix_conf_scale  = clamp(Math.max(vix_data_proxy, clamp(min/75,0,1)*0.5)/0.6, 0.3, 1.5);
+    const vix = clamp(vix_raw * vix_conf_scale, 10, 95);
+    document.getElementById('kVix').value=vix.toFixed(1)+'%';
+    // [V34 P7] VIX asimmetrico H vs A
+    const vix_H=clamp(xgRateH/MEAN_GOALS_PER_MIN*50,10,95);
+    const vix_A=clamp(xgRateA/MEAN_GOALS_PER_MIN*50,10,95);
+    const vix_asym=Math.abs(vix_H-vix_A);
+
+    // ════════════════════════════════════════════════════════════
+    // METRICHE ANALITICHE ADDITIVE (non modificano lambda/probs)
+    // ════════════════════════════════════════════════════════════
+
+    // [V28] #3 — Pace Deficit: ritmo live vs ritmo implicito dal total
+    // Positive = ritmo sopra le attese, negative = sotto
+    const paceDefH = safeMin>15 ? clamp((xgRateH-priorH)/Math.max(priorH,0.001),-2,2) : 0;
+    const paceDefA = safeMin>15 ? clamp((xgRateA-priorA)/Math.max(priorA,0.001),-2,2) : 0;
+    const paceDefTot = paceDefH+paceDefA;
+    const paceDefLabel = paceDefTot>0.3?'OVER_PACE': paceDefTot<-0.3?'UNDER_PACE':'ON_PACE';
+
+    // [V28] #5 — Score Effect Index: quanto è sorprendente il punteggio attuale?
+    // Usa lambda pre-match scalato per il tempo trascorso
+    const lH_pre_full=Math.max(0.15,(tC-sC)/2), lA_pre_full=Math.max(0.15,(tC+sC)/2);
+    const elapsed=clamp(min/90,0.05,1);
+    const p_score_prematch=poissonPMF(lH_pre_full*elapsed,hg)*poissonPMF(lA_pre_full*elapsed,ag);
+    const p_00_prematch=poissonPMF(lH_pre_full*elapsed,0)*poissonPMF(lA_pre_full*elapsed,0);
+    // [FIX V33] Surprise smorzata nelle prime fasi (<25'): pochi dati → rumore
+    // damp = clamp(min/25, 0, 1) → a min=10 il surpriseIdx vale il 40%
+    const surpriseRaw = (p_score_prematch>0&&p_00_prematch>0.001)
+        ? clamp(-Math.log2(p_score_prematch/p_00_prematch),0,10) : 0;
+    const surpriseDamp = clamp(min/25, 0, 1);
+    const surpriseIdx = surpriseRaw * surpriseDamp;
+    const surpriseLabel = surpriseIdx<1?'ATTESO': surpriseIdx<3?'INATTESO':'SHOCK';
+
+    // [V28] #7 — xG Gap: xG osservato accumulato vs gol effettivi
+    const xgGapH = parseFloat(xgObsPureH.toFixed(2)) - hg;
+    const xgGapA = parseFloat(xgObsPureA.toFixed(2)) - ag;
+    const xgGapLabel = (xgGapH>0.8||xgGapA>0.8)?'SFORTUNA': (xgGapH<-0.5||xgGapA<-0.5)?'FORTUNA':'ALLINEATO';
+
+    // [V28] #8 — Total Line Efficiency: modello vs bookie total
+    const modelTotal = lambdaH+lambdaA;
+    const tlEff = clamp(modelTotal-tC,-3,3);
+    const tlEffLabel = tlEff>0.35?'MODELLO_OVER': tlEff<-0.35?'MODELLO_UNDER':'ALLINEATO';
+
+    // [V28] #11 — Alert inconsistenza mercato vs dati live
+    if (safeMin>20) {
+        const steam_dTotal = steam.dTotal ? parseFloat(steam.dTotal) : 0;
+        if (steam_dTotal>0.4 && paceDefTot<-0.4)
+            alerts.push({type:'info',msg:'Attenzione: il mercato si aspetta più gol ma la partita è lenta — situazione contraddittoria.'});
+        if (steam_dTotal<-0.4 && paceDefTot>0.4)
+            alerts.push({type:'info',msg:'Attenzione: il mercato si aspetta meno gol ma la partita è intensa — il bookie sa qualcosa?'});
+        if (Math.abs(tlEff)>0.8 && steam.level==='none')
+            alerts.push({type:'info',msg:`Il modello e il bookie non concordano sul totale gol — possibile valore su Over o Under.`});
+    }
+
+    // [FIX V24] Confidence shots-first
+    const shotS = clamp((tsH+tsA)/26, 0, 1);
+    const daS   = clamp((daH+daA)/60, 0, 1);
+    const dataS = shotS*0.80 + daS*0.20;
+    const timeS = clamp(min/75, 0, 1);
+    // [V37 P10] GREEN_THRESH × VIX: aggiustamento applicato in generateAdvice via _vixAdj
+    // [V34 P4] Confidence granulare: datiQ(50%) + stabQ(20%) + timeQ(30%)
+    // stabQ misura stabilità prob chiave tra scan consecutivi (bassa varianza = modello convergito)
+    let stabQ=0.50;
+    if (db&&matchName&&db[matchName]?.history?.length>=2) {
+        const _h2=db[matchName].history.slice(0,2);
+        const _la=_h2[0]?.data?.probs, _pr=_h2[1]?.data?.probs;
+        if (_la&&_pr) { const _d=Math.abs((_la['1']||0)-(_pr['1']||0))+Math.abs((_la.O_Dyn||0)-(_pr.O_Dyn||0)); stabQ=clamp(1.0-_d*3.0,0.20,0.90); }
+    }
+    const hasData=dataS>0.05;
+    const confidence=Math.min(hasData?(dataS*0.50+stabQ*0.20+timeS*0.30)*100:timeS*25, 88);
+
+    return {
+        probs:{
+            '1':agg.p1, 'X':agg.pX, '2':agg.p2,
+            DNB_H:agg.pDNB_H, DNB_A:agg.pDNB_A,
+            Over15:agg.pOver15, Under25:1-agg.pOver25,
+            DC_1X:agg.p1X, DC_X2:agg.pX2, DC_12:agg.p12,
+            Next_H:nextH_abs, Next_A:nextA_abs,
+            Next_H_c:nextH_cond, Next_A_c:nextA_cond,
+            O_Dyn:agg.pOver, Over25:agg.pOver25, BTTS:pBTTS
+        },
+        matrix, htProbs, etProbs, dynOver, vix, confidence, alerts, min,
+        confIntervals:(()=>{const unc=Math.max(0.01,(1-confidence/100)*0.45);const ci=(p)=>({lo:+(Math.max(0.01,p-unc*Math.sqrt(p*(1-p))*2)).toFixed(3),hi:+(Math.min(0.99,p+unc*Math.sqrt(p*(1-p))*2)).toFixed(3)});return{p1:ci(agg.p1),pX:ci(agg.pX),p2:ci(agg.p2),pO:ci(agg.pOver)};})(),
+        score:`${hg}-${ag}`, currentHg:hg, currentAg:ag, isGarbageTime:isGarbageTime,
+        // [V37 P7] Proiezione finale esplicita
+        // [V37 P12] Stima gol residui da DB storico (se disponibile)
+        historicalResidual:(()=>{
+            try{
+                const _db=getDB(); const _scores=[];
+                Object.values(_db).forEach(m=>{
+                    if(!m.result||!m.history?.length) return;
+                    const pts=m.result.finalScore.split('-').map(Number);
+                    if(pts.some(isNaN)) return;
+                    m.history.forEach(scan=>{
+                        const sd=scan?.data; if(!sd) return;
+                        const sm=sd.min||0, shg=sd.currentHg||0, sag=sd.currentAg||0;
+                        // Match simile: stesso score, minuto ±10
+                        if(shg===hg&&sag===ag&&Math.abs(sm-min)<=10){
+                            _scores.push((pts[0]+pts[1])-(hg+ag));  // gol residui reali
+                        }
+                    });
+                });
+                if(_scores.length>=3){
+                    const avg=_scores.reduce((a,b)=>a+b,0)/_scores.length;
+                    return {avg:+avg.toFixed(2),n:_scores.length};
+                }
+            }catch(e){}
+            return null;
+        })(),
+        projectedFinal:(()=>{
+            const remM=Math.max(1,90+rec-min);
+            const norm=(15*0.80+15*0.90+35*0.95+15*1.10+10*1.30)/90;
+            let pH=0,pA=0;
+            for(let m=0;m<remM;m++){const mm=min+m;const r=(mm<15?0.80:mm<30?0.90:mm<65?0.95:mm<80?1.10:mm<90?1.30:1.10)/norm;pH+=lambdaH/90*r;pA+=lambdaA/90*r;}
+            // [V40 M3] Garbage time: comprimi proiezione del 10%
+            const gtFactor=isGarbageTime?0.90:1.0;
+            pH*=gtFactor; pA*=gtFactor;
+            return {h:+(hg+pH).toFixed(1),a:+(ag+pA).toFixed(1),pH:+pH.toFixed(2),pA:+pA.toFixed(2)};
+        })(),
+        steam:{level:steam.level,dSpread:steam.dSpread.toFixed(2),dTotal:steam.dTotal.toFixed(2),signals:steam.signals},
+        vixDetail:{H:vix_H.toFixed(0),A:vix_A.toFixed(0),asym:vix_asym.toFixed(0)},
+        // [V36] raw include tutti gli input per auditabilità completa
+        raw:{min,hg,ag,sotH,sotA,misH,misA,corH,corA,daH,daA,possH,possA,lastGoal,
+             xgObsH:xgObsPureH.toFixed(3),xgObsA:xgObsPureA.toFixed(3),xgRateH:xgRateH.toFixed(6),xgRateA:xgRateA.toFixed(6),
+             xgQualH:xgObsPureH.toFixed(2),xgQualA:xgObsPureA.toFixed(2),
+             // [V37 P8] Ritmo per tempo: confronto intensità PT vs ST
+             halfPeriod:min<=45?'PT':'ST'},
+        xG:{h:naked_xGH,a:naked_xGA},
+        // [V28] Metriche analitiche additive
+        metrics:{
+            paceDefH:paceDefH.toFixed(2), paceDefA:paceDefA.toFixed(2), paceDefLabel,
+            surpriseIdx:surpriseIdx.toFixed(2), surpriseLabel,
+            xgGapH:xgGapH.toFixed(2), xgGapA:xgGapA.toFixed(2), xgGapLabel,
+            tlEff:tlEff.toFixed(2), tlEffLabel, modelTotal:modelTotal.toFixed(2),
+            lH_live:lambdaH.toFixed(3), lA_live:lambdaA.toFixed(3),
+            projH:projH.toFixed(3), projA:projA.toFixed(3)
+        }
+    };
+}
+
+// ════════════════════════════════════════════════════════════════
+//  SCANNER
+// ════════════════════════════════════════════════════════════════
+// [V36] Input validation: evidenza visiva range errati (non blocca il calcolo)
+function validateInputs() {
+    const rules=[
+        {id:'sotH',min:0,max:50},{id:'sotA',min:0,max:50},
+        {id:'misH',min:0,max:50},{id:'misA',min:0,max:50},
+        {id:'corH',min:0,max:30},{id:'corA',min:0,max:30},
+        {id:'daH', min:0,max:80},{id:'daA', min:0,max:80},
+        {id:'lHg', min:0,max:20},{id:'lAg', min:0,max:20},
+        {id:'lMin',min:0,max:120},{id:'tC', min:0.5,max:9,float:true},
+    ];
+    let hasWarn=false;
+    rules.forEach(({id,min,max,float})=>{
+        const el=document.getElementById(id); if(!el) return;
+        const v=float?parseFloat(el.value):parseInt(el.value);
+        el.classList.remove('input-warn','input-error');
+        if(!isNaN(v)){
+            if(v<min||v>max){ el.classList.add(v<min*0.5||v>max*2?'input-error':'input-warn'); hasWarn=true; }
+        }
+    });
+    return !hasWarn;
+}
+function runOracleScanner() {
+    const n=document.getElementById('matchName').value.trim().replace(/\s+/g,' ');
+    if (!n) { alert('Inserisci Nome Match!'); return; }
+    validateInputs();  // [V36] evidenza visiva (non blocca)
+    const btn=document.getElementById('btnScan');
+    btn.disabled=true; btn.textContent='⏳ CALCOLO...';
+    setTimeout(()=>{
+        try {
+            saveCurrentMatch();
+            const db=getDB(), data=runOracleEngine(n,db);
+            // Leggi quote bookie opzionali
+            const getBK=(id)=>{ const v=parseFloat(document.getElementById(id)?.value?.replace(',','.')); return (!isNaN(v)&&v>1.01)?v:null; };
+            data.bookieOdds={
+                '1':getBK('bk1'), 'X':getBK('bkX'), '2':getBK('bk2'),
+                'O_Dyn':getBK('bkO'), 'BTTS':getBK('bkB'),
+                'O15':getBK('bkO15'), 'U25':getBK('bkU25'),
+                'Next_H_c':getBK('bkNH')
+            };
+            if (!db[n].history) db[n].history=[];
+            db[n].history.unshift({id:Date.now(),time:new Date().toLocaleTimeString(),data});
+            if (db[n].history.length>15) db[n].history=db[n].history.slice(0,15);
+            setDB(db); renderHistory(n);
+        } catch(e) { console.error(e); alert('Errore: '+e.message); }
+        finally { btn.disabled=false; btn.textContent='🔮 ESEGUI V40 SCAN'; }
+    },20);
+}
+
+// ════════════════════════════════════════════════════════════════
+//  KELLY
+// ════════════════════════════════════════════════════════════════
+function calculateKelly() {
+    const fOdd=parseFloat(document.getElementById('kFair').value.replace(',','.'));
+    const bOdd=parseFloat(document.getElementById('bOdd').value.replace(',','.'));
+    if (!fOdd||isNaN(fOdd)||fOdd<=1||!bOdd||isNaN(bOdd)||bOdd<=1) { alert('Quotas valide > 1.00!'); return; }
+    const p=1/fOdd, b=bOdd-1, kelly=((b*p)-(1-p))/b;
+    // [BUG FIX V27] VIX Kelly: logica corretta
+    // Vecchio: vixM = 1-vix/100 → alta intensità = stake ridotto (invertito e arbitrario)
+    // Nuovo: VIX è un indicatore di volatilità operativa, NON di edge
+    // Sotto VIX=30 (partita bloccata, dati scarsi): no scommessa
+    // VIX 30-60 (normale): Kelly pieno
+    // Oltre VIX=60 (alta intensità, molto movimento): Kelly ridotto del 20% (dati volatili)
+    const vix=parseFloat(document.getElementById('kVix').value)||50;
+    const frac=parseFloat(document.getElementById('kellyFrac').value);
+    const bank=getSafeNum('bankroll');
+    // [V38] Guard: bankroll vuoto o zero
+    if (!bank || bank <= 0) { alert('❌ Inserisci un bankroll valido (> 0€)'); return; }
+    const edge=((p*bOdd-1)*100).toFixed(1);
+    if (kelly<=0) { alert(`❌ NESSUN EDGE — Edge: ${edge}%\nQuota bookie sotto il fair value.`); return; }
+    if (vix<30)   { alert(`⚠️ VIX BASSO (${vix.toFixed(1)}%) — Dati insufficienti, partita bloccata.\nEdge: ${edge}% · SCONSIGLIATO scommettere ora.`); return; }
+    const vixMod = vix>60 ? 0.80 : 1.0;  // alta volatilità → cautela -20%
+    const stake=(bank*kelly*frac*vixMod).toFixed(2);
+    const vixNote = vix>60 ? ` · VIX alto: Kelly ridotto -20%` : '';
+    alert(`✅ Edge: ${edge}%\nKelly: ${(kelly*100).toFixed(1)}%${vixNote}\n\n💰 Stake consigliato: €${stake}`);
+}
+
+// ════════════════════════════════════════════════════════════════
+//  V28 HELPER RENDER FUNCTIONS
+// ════════════════════════════════════════════════════════════════
+
+// [V28] #3 #5 #7 #8 — Pannello metriche analitiche
+function renderMetrics(d) {
+    const m=d.metrics; if (!m) return '';
+    // [V38] Analisi contestuale riscritta in linguaggio umano
+    const rows=[];
+
+    // 1. Ritmo partita vs atteso dal bookie
+    const pace=m.paceDefLabel;
+    if(pace==='OVER_PACE')
+        rows.push({col:'var(--matrix-green)',text:'La partita va più veloce del previsto — potrebbe esserci più gol del solito.'});
+    else if(pace==='UNDER_PACE')
+        rows.push({col:'var(--chaos-orange)',text:'La partita va più lenta del previsto — meno gol attesi rispetto al mercato.'});
+
+    // 2. Il punteggio è normale o a sorpresa?
+    const si=parseFloat(m.surpriseIdx||0);
+    if(si>=4)
+        rows.push({col:'var(--ferrari-red)',text:`Il punteggio (${d.score}) è molto inatteso rispetto all'andamento — il modello si adatta.`});
+    else if(si>=2)
+        rows.push({col:'var(--chaos-orange)',text:`Il punteggio (${d.score}) è leggermente inatteso rispetto ai tiri prodotti.`});
+
+    // 3. Chi merita di più rispetto al punteggio?
+    const xgH=parseFloat(m.xgGapH||0), xgA=parseFloat(m.xgGapA||0);
+    if(m.xgGapLabel==='SFORTUNA'&&xgH>0.3)
+        rows.push({col:'var(--chaos-orange)',text:`La casa sta producendo più di quanto il punteggio suggerisce — probabilmente più pericolosa di quanto sembri (+${xgH.toFixed(1)} xG non concretizzato).`});
+    else if(m.xgGapLabel==='SFORTUNA'&&xgA>0.3)
+        rows.push({col:'var(--chaos-orange)',text:`La trasferta sta producendo più del punteggio — più pericolosa di quanto sembri (+${xgA.toFixed(1)} xG non concretizzato).`});
+    else if(m.xgGapLabel==='FORTUNA')
+        rows.push({col:'var(--kelly-blue)',text:'Chi è in vantaggio ha segnato più di quanto meritasse — il vantaggio potrebbe non rispecchiare la partita reale.'});
+
+    // 4. Il modello e il bookie concordano?
+    const tl=parseFloat(m.tlEff||0);
+    if(m.tlEffLabel==='MODELLO_OVER'&&Math.abs(tl)>=0.5)
+        rows.push({col:'var(--matrix-green)',text:`Il modello stima ${m.modelTotal} gol totali, il bookie offre Over ${(parseFloat(m.modelTotal)-tl).toFixed(1)}: c'è valore potenziale sull'Over.`});
+    else if(m.tlEffLabel==='MODELLO_UNDER'&&Math.abs(tl)>=0.5)
+        rows.push({col:'var(--kelly-blue)',text:`Il modello stima ${m.modelTotal} gol totali, inferiore alla linea del bookie: c'è valore potenziale sull'Under.`});
+
+    if(rows.length===0) return '';
+    const items=rows.map(r=>`<div style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px solid #111">
+        <span style="color:${r.col};flex-shrink:0;margin-top:1px">●</span>
+        <span style="color:#ccc;font-size:0.72em;line-height:1.4">${r.text}</span>
+    </div>`).join('');
+    return `<div class="metrics-panel">
+        <div class="metrics-title" style="font-size:0.72em;color:#888;margin-bottom:6px">📋 LETTURA DELLA PARTITA</div>
+        ${items}
+    </div>`;
+}
+
+// [V28] #12 — Mini chart evoluzione scan
+function renderMiniChart(history) {
+    if (!history||history.length<2) return '';
+    const scans=[...history].reverse().slice(0,5);  // ordine cronologico, max 5
+    const colors={'P(1)':'var(--matrix-green)','Over':'var(--gold)','VIX':'var(--chaos-orange)','Conf':'var(--kelly-blue)'};
+    const getters={
+        'P(1)': d=>d.probs?.['1']||0,
+        'Over': d=>d.probs?.O_Dyn||0,
+        'VIX':  d=>(d.vix||50)/100,
+        'Conf': d=>(d.confidence||0)/100
+    };
+    let html='<div class="mini-chart"><div class="mini-chart-title">📈 Evoluzione Scan</div>';
+    for (const [label,getter] of Object.entries(getters)) {
+        const values=scans.map(s=>getter(s.data));
+        const maxV=Math.max(...values,0.01);
+        html+=`<div class="chart-row"><span class="chart-lbl">${label}</span>`;
+        values.forEach((v,i)=>{
+            const w=clamp(v/maxV*100,2,100);
+            const col=colors[label];
+            const isLast=i===values.length-1;
+            html+=`<div class="chart-bar" title="${(v*100).toFixed(0)}%"><div class="chart-fill" style="width:${w}%;background:${col};opacity:${isLast?1:0.5+0.5*(i/(values.length-1))}"></div></div>`;
+        });
+        const last=values[values.length-1];
+        html+=`<span class="chart-val">${(last*100).toFixed(0)}%</span></div>`;
+    }
+    html+='</div>';
+    return html;
+}
+
+// [V28] #10 — Monte Carlo 300 simulazioni distribuzione finale
+function renderMonteCarlo(d) {
+    const projH=parseFloat(d.metrics?.projH||0);
+    const projA=parseFloat(d.metrics?.projA||0);
+    if (projH<0.01&&projA<0.01) return '';
+    const hg=d.currentHg||0, ag=d.currentAg||0;
+    const N=1000;  // [V35] 300→1000: varianza top-5 dimezzata (~46%), costo <5ms
+    const results={};
+    for (let i=0;i<N;i++) {
+        let gh=0,gP=1,gL=Math.exp(-projH);
+        do{gh++;gP*=Math.random();}while(gP>gL); gh--;
+        let ga=0,gP2=1,gL2=Math.exp(-projA);
+        do{ga++;gP2*=Math.random();}while(gP2>gL2); ga--;
+        const k=`${hg+gh}-${ag+ga}`;
+        results[k]=(results[k]||0)+1;
+    }
+    const top5=Object.entries(results).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    const topPct=top5[0][1]/N;
+    let html='<div class="mc-dist"><div class="mc-title">🎲 Simulazione risultati</div>';
+    top5.forEach(([score,cnt])=>{
+        const pct=cnt/N; const w=clamp(pct/topPct*100,2,100);
+        const isTop=score===top5[0][0];
+        const col=isTop?'var(--chaos-orange)':'var(--gold)';
+        html+=`<div class="mc-row">
+            <span class="mc-score" style="color:${isTop?'var(--chaos-orange)':'#888'};font-weight:${isTop?'bold':'normal'}">${score}</span>
+            <div class="mc-bar"><div class="mc-fill" style="width:${w}%;background:${col}"></div></div>
+            <span class="mc-pct">${(pct*100).toFixed(0)}%</span>
+        </div>`;
+    });
+    html+='</div>';
+    return html;
+}
+
+// [V28] #9 — Match Fingerprint: pattern dal DB storico
+function renderFingerprint(n, db) {
+    const allMatches=Object.values(db);
+    if (allMatches.length<3) return '';  // minimo 3 match per avere un pattern
+    const currentPre=db[n]?.pre;
+    if (!currentPre) return '';
+    const currentSC=parseFloat(currentPre.sC||0);
+    const currentTC=parseFloat(currentPre.tC||2.5);
+
+    // Cerca match con spread simile (±0.5) e total simile (±0.5)
+    const similar=[];
+    for (const [mName,mData] of Object.entries(db)) {
+        if (mName===n||!mData.history?.length) continue;
+        const pre=mData.pre; if (!pre) continue;
+        const mSC=parseFloat(pre.sC||0), mTC=parseFloat(pre.tC||2.5);
+        if (Math.abs(mSC-currentSC)<=0.5 && Math.abs(mTC-currentTC)<=0.5) {
+            // Prendi il PRIMO scan (l'unico disponibile al momento del risultato)
+            // e l'ULTIMO (il risultato finale approssimato)
+            const _fps=mData.history.length;
+            const _fpm=mData.history[0]?.data?.min||0;
+            const _fpq=Math.min(_fps/3,1.0)*0.5+Math.min(_fpm/75,1.0)*0.5;
+            const _fpl=mData.history[0]?.data;
+            if (_fpl) similar.push({data:_fpl,qual:_fpq,nScans:_fps});
+        }
+    }
+    if (similar.length<2) return '';
+    similar.sort((a,b)=>(b.qual||0)-(a.qual||0));
+
+    // Aggrega statistiche
+    let sum1=0,sumOver=0,sumXgH=0,sumXgA=0,n2=similar.length;
+    // [V36] Conta esiti reali se salvati (saveMatchResult)
+    let realW=0,realD=0,realL=0,realN=0;
+    similar.forEach(({data:d,qual,name:mName2})=>{ if(!d) return;
+        // [V36] Conta esito reale
+        const _res=mName2&&db[mName2]?.result;
+        if(_res){const pts=_res.finalScore?.split('-').map(Number);if(pts&&pts.length===2){realN++;if(pts[0]>pts[1])realW++;else if(pts[0]===pts[1])realD++;else realL++;}}
+        sum1+=(d.probs?.['1']||0);
+        sumOver+=(d.probs?.O_Dyn||0);
+        sumXgH+=parseFloat(d.xG?.h||0);
+        sumXgA+=parseFloat(d.xG?.a||0);
+    });
+    const avg1=(sum1/n2*100).toFixed(0);
+    const avgOver=(sumOver/n2*100).toFixed(0);
+    const avgXgH=(sumXgH/n2).toFixed(2);
+    const avgXgA=(sumXgA/n2).toFixed(2);
+
+    return `<div class="fingerprint-box">
+        <div class="fingerprint-title">🧬 Fingerprint — ${similar.length} match simili (top ${n2} per qualità) · ${realN>=2?`📊 ${realW}V ${realD}P ${realL}S`:"nessun esito"} (sC≈${currentSC}, tC≈${currentTC})</div>
+        P(1) medio: <strong>${avg1}%</strong> &nbsp;·&nbsp;
+        P(Over) medio: <strong>${avgOver}%</strong> &nbsp;·&nbsp;
+        xG Casa medio: <strong>${avgXgH}</strong> &nbsp;·&nbsp;
+        xG Trasf medio: <strong>${avgXgA}</strong>
+        ${(()=>{
+            // [V38] Tipo partita: confronta xG e pace attuali vs media storica simile
+            const _curD=db[n]?.history?.[0]?.data;
+            const curXgH=parseFloat(_curD?.xG?.h||0);
+            const curXgA=parseFloat(_curD?.xG?.a||0);
+            const curVix=parseFloat(_curD?.vix||50);
+            const avgXgHf=parseFloat(avgXgH), avgXgAf=parseFloat(avgXgA);
+            const xgDiff=Math.abs((curXgH+curXgA)-(avgXgHf+avgXgAf));
+            if(!curXgH&&!curXgA) return '';
+            const moreOff=(curXgH+curXgA)>(avgXgHf+avgXgAf)*1.15;
+            const moreDef=(curXgH+curXgA)<(avgXgHf+avgXgAf)*0.85;
+            const label=moreOff?'più offensiva della media storica':moreDef?'più difensiva della media storica':'in linea con la media storica';
+            const col=moreOff?'var(--chaos-orange)':moreDef?'var(--kelly-blue)':'#666';
+            return `<div style="margin-top:4px;font-size:0.80em;color:${col}">→ Questa partita è <b>${label}</b> (xG: ${(curXgH+curXgA).toFixed(2)} vs media ${(avgXgHf+avgXgAf).toFixed(2)})</div>`;
+        })()}
+    </div>`;
+}
+
+// ════════════════════════════════════════════════════════════════
+//  RENDER
+// ════════════════════════════════════════════════════════════════
+
+// [V34 P1] Pattern alert multi-scan (informativo, non tocca lambda)
+function detectPatterns(history){
+    const alerts=[];
+    if(!history||history.length<3) return alerts;
+    const scans=history.slice(0,4).reverse();
+    const rates=scans.map(s=>parseFloat(s.data?.raw?.xgRateH||0)).filter(r=>r>0);
+    if(rates.length>=3){
+        const growing=rates.every((r,i)=>i===0||r>=rates[i-1]*0.95);
+        const shrinking=rates.every((r,i)=>i===0||r<=rates[i-1]*1.05);
+        if(growing) alerts.push({type:'pattern',msg:`La casa sta crescendo scan dopo scan — ritmo offensivo in miglioramento costante.`});
+        else if(shrinking) alerts.push({type:'pattern',msg:`La casa sta calando scan dopo scan — ritmo offensivo in peggioramento costante.`});
+    }
+    if(rates.length>=4){
+        const old2=rates.slice(0,2),new2=rates.slice(2,4);
+        const oA=old2.reduce((a,b)=>a+b,0)/2,nA=new2.reduce((a,b)=>a+b,0)/2;
+        if(nA>oA*1.20) alerts.push({type:'pattern',msg:`La casa aveva rallentato ma ora sta riprendendo — possibile cambio di inerzia.`});
+        else if(nA<oA*0.80) alerts.push({type:'pattern',msg:`La casa aveva accelerato ma ora sta rallentando — possibile perdita di inerzia.`});
+    }
+    const xgH=scans.map(s=>parseFloat(s.data?.xG?.h||0));
+    const goals=scans.map(s=>s.data?.currentHg||0);
+    if(xgH.length>=3&&xgH.every(x=>x>1.2)&&goals[goals.length-1]===goals[0])
+        alerts.push({type:'pattern',msg:`La casa produce xG alto da ${xgH.length} scan consecutivi ma non segna — potrebbe essere sfortuna o portiere in forma.`});
+    return alerts;
+}
+function renderHistory(n) {
+    const db=getDB(), cont=document.getElementById('logContainer');
+    cont.innerHTML='';
+    if (!db[n]?.history) return;
+
+    const _pats=detectPatterns(db[n].history);
+    const _patH=_pats.length?`<div style="background:#0a1a0a;border:1px solid var(--matrix-green);border-radius:4px;padding:8px 12px;margin-bottom:8px;font-size:0.68em;font-family:monospace">${_pats.map(p=>`<div style="color:${p.type==='acceleration'?'var(--matrix-green)':p.type==='deceleration'?'var(--ferrari-red)':'var(--gold)'};margin-bottom:3px">${p.msg}</div>`).join('')}</div>`:'';
+    const fpHTML=renderFingerprint(n,db);
+    if (fpHTML) cont.innerHTML=fpHTML;
+    if (_patH) cont.innerHTML+=_patH;
+
+    if(db[n]?.result){const res=db[n].result;const bAvg=parseFloat(res.brier?.avg||1);const bC=bAvg<0.10?'var(--matrix-green)':bAvg<0.20?'var(--gold)':'var(--ferrari-red)';cont.innerHTML+=`<div style="background:#050505;border:1px solid ${bC};border-radius:4px;padding:6px 12px;margin-bottom:8px;font-family:monospace;font-size:0.68em;color:${bC}">📊 RISULTATO: ${res.finalScore} · Brier avg:${bAvg.toFixed(3)}<span style="color:#444"> (P1:${res.brier?.p1} PX:${res.brier?.pX} P2:${res.brier?.p2})</span></div>`;}
+    db[n].history.forEach((h,idx)=>{
+        const d=h.data;
+        let alertsHTML='';
+        // [V36] Guard: d.alerts potrebbe essere undefined su scan da versioni vecchie
+        (d.alerts||[]).forEach(a=>alertsHTML+=`<span class="t-alert ${a.type||'info'}">${a.msg||''}</span>`);
+
+        let steamHTML='';
+        if (d.steam?.level!=='none') {
+            const sc=d.steam;
+            const scol=sc.level==='strong'?'var(--steam-color)':sc.level==='reverse'?'var(--ferrari-red)':'var(--gold)';
+            steamHTML=`<div class="steam-log-box">
+                <div class="steam-log-item"><span>Steam</span><span style="color:${scol}">${sc.level.toUpperCase()}</span></div>
+                <div class="steam-log-item"><span>ΔSpread</span><span style="color:${parseFloat(sc.dSpread)<0?'var(--matrix-green)':'var(--ferrari-red)'}">${sc.dSpread}</span></div>
+                <div class="steam-log-item"><span>ΔTotal</span><span style="color:${parseFloat(sc.dTotal)>0?'var(--chaos-orange)':'var(--kelly-blue)'}">${sc.dTotal}</span></div>
+                ${sc.signals.length?`<div class="steam-log-item" style="flex:2"><span>Segnali</span><span style="color:${scol};font-size:0.85em">${sc.signals.join(' · ')}</span></div>`:''}
+            </div>`;
+        }
+
+        let matrixHTML='';
+        if (d.matrix&&d.matrix.length>0) {
+            const hgN=d.currentHg??0, agN=d.currentAg??0;
+            const sorted=[...d.matrix].sort((a,b)=>b.p-a.p).slice(0,6);
+            const maxP=sorted[0]?.p||0.01;
+            const cells=sorted.map(c=>{
+                const cls=c.p>maxP*0.75?'hot':(c.p>maxP*0.45?'warm':'');
+                const col=cls==='hot'?'var(--chaos-orange)':cls==='warm'?'var(--gold)':'#666';
+                return `<div class="matrix-cell ${cls}"><span class="sc">${hgN+c.h}-${agN+c.a}</span><span class="pct" style="color:${col}">${(c.p*100).toFixed(1)}%</span></div>`;
+            }).join('');
+            matrixHTML=`<div class="matrix-wrap">
+                <div class="matrix-title">📊 Risultati più probabili</div>
+                <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
+                ${sorted.map((r,i)=>{
+                    const sc=hgN+r.h+'-'+(agN+r.a);
+                    const pct=(r.p*100).toFixed(1);
+                    const col=i===0?'var(--chaos-orange)':i===1?'var(--gold)':'#555';
+                    const w=Math.round(r.p/maxP*100);
+                    return `<div style="display:flex;align-items:center;gap:8px">
+                        <span style="min-width:32px;color:${col};font-weight:${i<2?'bold':'normal'};font-size:0.72em">${sc}</span>
+                        <div style="flex:1;height:3px;background:#111"><div style="width:${w}%;height:100%;background:${col}"></div></div>
+                        <span style="min-width:28px;text-align:right;color:${col};font-size:0.68em">${pct}%</span>
+                    </div>`;
+                }).join('')}
+                </div></div>`;
+        }
+
+        let htHTML='';
+        // [V37] Mostra analisi primo tempo solo se il scan è stato fatto nel PT (min<=44)
+        if (d.htProbs && (d.min||0) <= 44) {
+            const ht=d.htProbs;
+            htHTML=`<div class="ht-title">⏱️ ANALISI PRIMO TEMPO</div>
+            <div class="dynamic-lines-grid grid-4">
+                <div class="dyn-box"><span class="lbl">1 HT</span><span class="val">@${calcFairOdd(ht['1'])}</span><span class="prob">${(ht['1']*100).toFixed(0)}%</span></div>
+                <div class="dyn-box"><span class="lbl">X HT</span><span class="val">@${calcFairOdd(ht['X'])}</span><span class="prob">${(ht['X']*100).toFixed(0)}%</span></div>
+                <div class="dyn-box"><span class="lbl">2 HT</span><span class="val">@${calcFairOdd(ht['2'])}</span><span class="prob">${(ht['2']*100).toFixed(0)}%</span></div>
+                <div class="dyn-box highlight"><span class="lbl" style="color:var(--gold)">Over 0.5 HT res.</span><span class="val">@${calcFairOdd(ht['O'])}</span><span class="prob">${(ht['O']*100).toFixed(0)}%</span></div>
+            </div>`;
+        }
+
+        let etHTML='';
+        if (d.etProbs) {
+            const et=d.etProbs;
+            etHTML=`<div class="ht-title" style="color:var(--alert-purple)">⏱️ SUPPLEMENTARI + RIGORI</div>
+            <div class="dynamic-lines-grid grid-4">
+                <div class="dyn-box"><span class="lbl">ET Casa</span><span class="val">@${calcFairOdd(et.etH)}</span><span class="prob">${(et.etH*100).toFixed(0)}%</span></div>
+                <div class="dyn-box"><span class="lbl">ET Trasf</span><span class="val">@${calcFairOdd(et.etA)}</span><span class="prob">${(et.etA*100).toFixed(0)}%</span></div>
+                <div class="dyn-box"><span class="lbl">Pen Casa</span><span class="val">@${calcFairOdd(et.penH)}</span><span class="prob">${(et.penH*100).toFixed(0)}%</span></div>
+                <div class="dyn-box"><span class="lbl">Pen Trasf</span><span class="val">@${calcFairOdd(et.penA)}</span><span class="prob">${(et.penA*100).toFixed(0)}%</span></div>
+            </div>`;
+        }
+
+        const vixC=d.vix>60?'var(--chaos-orange)':d.vix>35?'var(--gold)':'var(--kelly-blue)';
+        const confC=d.confidence>=70?'var(--matrix-green)':d.confidence>=55?'var(--gold)':d.confidence>=40?'var(--chaos-orange)':'var(--ferrari-red)';
+        const live=idx===0?`<span style="font-size:0.55em;background:var(--ferrari-red);color:#fff;padding:2px 6px;border-radius:2px;margin-left:6px;">LIVE</span>`:'';
+        // INSUFF=dati scarsi, INFO=dati presenti ma non operativi, DECISION=Oracle attivo
+        const _sT=Math.round(d.confidence||0)<40?'DATI SCARSI':Math.round(d.confidence||0)<55?'ESPLORATIVO':'OPERATIVO';
+        const _sTc=_sT==='DECISION'?'var(--matrix-green)':_sT==='INFO'?'var(--chaos-orange)':'var(--ferrari-red)';
+        const scanTypeSpan=`<span style="font-size:0.62em;border:1px solid ${_sTc};color:${_sTc};padding:1px 5px;border-radius:2px;margin-left:4px;">${_sT}</span>`;
+        // [V36] Delta tra scan consecutivi
+        let deltaHTML='';
+        if (idx>0&&db[n].history[idx-1]?.data?.probs) {
+            const prev=db[n].history[idx-1].data.probs;
+            const delta=(key,fmt)=>{
+                const diff=(d.probs[key]||0)-(prev[key]||0);
+                if(Math.abs(diff)<0.005) return '';
+                const col=diff>0?'var(--matrix-green)':'var(--ferrari-red)';
+                return `<span style="font-size:0.70em;color:${col};margin-left:4px">${diff>0?'▲':'▼'}${fmt(Math.abs(diff))}</span>`;
+            };
+            const d1=delta('1',v=>`${(v*100).toFixed(0)}%`);
+            const dO=delta('O_Dyn',v=>`${(v*100).toFixed(0)}%`);
+            const dC=(d.confidence-(db[n].history[idx-1]?.data?.confidence||0));
+            const dCspan=Math.abs(dC)>1?`<span style="font-size:0.70em;color:${dC>0?'var(--matrix-green)':'var(--ferrari-red)'};margin-left:6px">${dC>0?'▲':'▼'}conf ${Math.abs(dC).toFixed(0)}pp</span>`:'';
+            if(d1||dO||dCspan) deltaHTML=`<div style="font-size:0.68em;color:var(--text-muted);margin-bottom:3px">Δ vs scan prec: P1${d1||' —'} · Over${dO||' —'}${dCspan}</div>`;
+        }
+        // [V37 P2] Conta conferme del TOP PICK negli scan precedenti
+        let pickConfirmHTML='';
+        try {
+            const _history=db[n]?.history||[];
+            const _currentTopId=d.probs?renderAdvice(d).match(/verdict-pick-name[^>]*>([^<]+)/)?.[1]:'';
+            // Approccio diretto: confronta le probs chiave per coerenza
+            if(_history.length>=2&&idx===0) {
+                const _cur=d.probs; let _confirms=0;
+                for(let _i=1;_i<Math.min(_history.length,5);_i++){
+                    const _prev=_history[_i]?.data?.probs;
+                    if(!_prev) continue;
+                    // Controlla se la direzione del pick principale è consistente
+                    const _curTop=Math.max(_cur['1']||0,_cur['O_Dyn']||0,_cur['2']||0);
+                    const _prevTop=Math.max(_prev['1']||0,_prev['O_Dyn']||0,_prev['2']||0);
+                    const _curKey=_curTop===(_cur['1']||0)?'1':_curTop===(_cur['O_Dyn']||0)?'O':'2';
+                    const _prevKey=_prevTop===(_prev['1']||0)?'1':_prevTop===(_prev['O_Dyn']||0)?'O':'2';
+                    if(_curKey===_prevKey) _confirms++;
+                }
+                if(_confirms>=2){
+                    const _label=_confirms>=3?'✅ CONFERMATO ('+_confirms+' scan)':'📈 EMERGENTE ('+_confirms+' scan)';
+                    const _col=_confirms>=3?'var(--matrix-green)':'var(--gold)';
+                    pickConfirmHTML=`<div style="font-size:0.68em;color:${_col};margin-bottom:4px">${_label}</div>`;
+                } else if(_confirms===0&&_history.length>=2){
+                    pickConfirmHTML=`<div style="font-size:0.68em;color:var(--chaos-orange);margin-bottom:4px">🆕 NUOVO — direzione cambiata rispetto a scan precedenti</div>`;
+                }
+            }
+        } catch(_e){}
+        const verdictHTML=d&&d.probs?renderAdvice(d):'';
+        const metricsHTML=renderMetrics(d);
+        const miniChartHTML=idx===0?renderMiniChart(db[n].history):'';
+        const mcHTML=idx===0?renderMonteCarlo(d):'';
+
+        cont.innerHTML+=`
+        <div class="log-entry" style="${idx===0?'border-left:4px solid var(--matrix-green);':''}">
+            ${miniChartHTML}
+            <div class="log-header">
+                <span class="log-min">MIN ${d.min}'${live}</span>
+                <div style="display:flex;flex-direction:column;align-items:center;">
+                    <span style="font-weight:bold;color:#fff;font-size:1.8em;letter-spacing:2px">${d.score}</span>
+                    <div style="display:flex;gap:5px;margin-top:3px;flex-wrap:wrap;justify-content:center;">
+                        <span class="xg-display" style="color:var(--matrix-green)" title="Gol che la casa merita di segnare in base ai tiri prodotti">xG Casa: ${d.xG.h}</span>
+                        <span class="xg-display" style="color:var(--ferrari-red)" title="Gol che la trasferta merita di segnare in base ai tiri prodotti">xG Trasf: ${d.xG.a}</span>
+                        <span class="xg-display" style="color:var(--gold)" title="Quanto sono pericolosi i tiri della casa (0=lontani/angolati, 1=ravvicinati/centrali)">Qualità tiri Casa: ${d.raw.xgQualH}</span>
+                        <span class="xg-display" style="color:var(--chaos-orange)" title="Quanto sono pericolosi i tiri della trasferta (0=lontani/angolati, 1=ravvicinati/centrali)">Qualità tiri Trasf: ${d.raw.xgQualA}</span>
+                    </div>
+                </div>
+                <span style="font-size:0.6em;color:#555;">${h.time}</span>${scanTypeSpan}
+            </div>
+            ${steamHTML}
+            <div class="vix-container">INTENSITÀ: <div class="vix-bar"><div class="vix-fill" style="width:${d.vix}%;background:${vixC}"></div></div><span style="margin-left:6px;color:${vixC}">${d.vix.toFixed(0)}%</span>${d.vixDetail&&parseFloat(d.vixDetail.asym)>20?`<span style="font-size:0.82em;color:var(--chaos-orange);margin-left:6px"> · Casa attacca ${Math.abs(parseFloat(d.vixDetail.H)-parseFloat(d.vixDetail.A))}% di più</span>`:""}<span style="font-size:0.85em;margin-left:8px;color:${d.vix>=70?'var(--ferrari-red)':d.vix>=50?'var(--chaos-orange)':d.vix>=30?'var(--gold)':'#555'}">${d.vix>=70?'⚡ Alta':d.vix>=50?'Sostenuta':d.vix>=30?'Normale':'🔒 Bassa'}</span></div>
+            <div class="conf-bar-wrap">AFFIDABILITÀ DATI: <div class="conf-bar"><div class="conf-fill" style="width:${d.confidence.toFixed(0)}%;background:${confC}"></div></div><span style="color:${confC}">${d.confidence.toFixed(0)}%</span><span style="color:#444;font-size:0.72em;margin-left:8px">⏱ ${Math.max(0,90+(d.raw?.rec||0)-(d.min||0))}' al termine</span>${d.confIntervals&&d.confidence<65?`<span style="color:#444;font-size:0.70em;margin-left:8px" title="Con questi dati, la probabilità che vinca la casa potrebbe variare in questo range">P(Casa) potrebbe variare: ${(d.confIntervals.p1.lo*100).toFixed(0)}–${(d.confIntervals.p1.hi*100).toFixed(0)}%</span>`:""}</div>
+            <div class="tactical-alerts">${alertsHTML}</div>
+            ${pickConfirmHTML}${deltaHTML}${metricsHTML}
+            ${verdictHTML}
+            ${Math.round(d.confidence||0)>=55?htHTML+etHTML:''}
+            ${Math.round(d.confidence||0)>=55?`<div class="dynamic-lines-grid grid-3" style="margin-top:12px;padding-bottom:6px;border-bottom:1px dotted #2a2a3a;">
+                <div class="dyn-box" style="border-color:var(--matrix-green)"><span class="lbl" style="color:var(--matrix-green)">1 Casa</span><span class="val">@${calcFairOdd(d.probs['1'])}</span><span class="prob">${(d.probs['1']*100).toFixed(0)}%</span></div>
+                <div class="dyn-box"><span class="lbl">X Pareggio</span><span class="val">@${calcFairOdd(d.probs['X'])}</span><span class="prob">${(d.probs['X']*100).toFixed(0)}%</span></div>
+                <div class="dyn-box" style="border-color:var(--ferrari-red)"><span class="lbl" style="color:var(--ferrari-red)">2 Trasf</span><span class="val">@${calcFairOdd(d.probs['2'])}</span><span class="prob">${(d.probs['2']*100).toFixed(0)}%</span></div>
+                
+            </div>
+            <div class="dynamic-lines-grid grid-6" style="margin-top:6px;">
+                ${(()=>{
+                    if(!d.probs) return '';
+                    const goals=(d.currentHg||0)+(d.currentAg||0);
+                    if(goals>=1){
+                        // [V29] Score ≥ 1 gol: Over1.5 è informativo
+                        return `<div class="dyn-box" style="border-color:var(--matrix-green)">
+                            <span class="lbl" style="color:var(--matrix-green)">Over 1.5</span>
+                            <span class="val">@${calcFairOdd(d.probs.Over15||0)}</span>
+                            <span class="prob">${((d.probs.Over15||0)*100).toFixed(0)}%</span></div>
+                        <div class="dyn-box" style="border-color:var(--kelly-blue)">
+                            <span class="lbl" style="color:var(--kelly-blue)">Under 2.5</span>
+                            <span class="val">@${calcFairOdd(d.probs.Under25||0)}</span>
+                            <span class="prob">${((d.probs.Under25||0)*100).toFixed(0)}%</span></div>`;
+                    } else {
+                        // [V29] Score 0-0: mostra Double Chance più utile
+                        const p1=(d.probs['1']||0),pX=(d.probs['X']||0),p2=(d.probs['2']||0);
+                        const dc1X=p1+pX, dcX2=p2+pX;
+                        const dcBest=dc1X>=dcX2?{n:'1X',p:dc1X}:{n:'X2',p:dcX2};
+                        const dcOther=dc1X>=dcX2?{n:'X2',p:dcX2}:{n:'1X',p:dc1X};
+                        return `<div class="dyn-box" style="border-color:var(--gold)">
+                            <span class="lbl" style="color:var(--gold)">DC ${dcBest.n}</span>
+                            <span class="val">@${calcFairOdd(dcBest.p)}</span>
+                            <span class="prob">${(dcBest.p*100).toFixed(0)}%</span></div>
+                        <div class="dyn-box" style="border-color:#555">
+                            <span class="lbl">DC ${dcOther.n}</span>
+                            <span class="val">@${calcFairOdd(dcOther.p)}</span>
+                            <span class="prob">${(dcOther.p*100).toFixed(0)}%</span></div>`;
+                    }
+                })()}
+                <div class="dyn-box highlight"><span class="lbl">Over ${d.dynOver}</span><span class="val">@${calcFairOdd(d.probs.O_Dyn)}</span><span class="prob">${(d.probs.O_Dyn*100).toFixed(0)}%</span></div>
+                <div class="dyn-box" style="border-color:var(--accent)"><span class="lbl" style="color:var(--accent)">BTTS</span><span class="val">@${calcFairOdd(d.probs.BTTS)}</span><span class="prob">${(d.probs.BTTS*100).toFixed(0)}%</span></div>
+                ${(d.currentAg||0)-(d.currentHg||0)<=1?`<div class="dyn-box" style="border-color:var(--matrix-green)"><span class="lbl" style="color:var(--matrix-green)">Prox⚽ Casa</span><span class="val">@${calcFairOdd(d.probs.Next_H_c)}</span><span class="prob">${(d.probs.Next_H_c*100).toFixed(0)}% cond.</span></div>`:''}
+                ${(d.currentHg||0)-(d.currentAg||0)<=1?`<div class="dyn-box" style="border-color:var(--ferrari-red)"><span class="lbl" style="color:var(--ferrari-red)">Prox⚽ Trasf</span><span class="val">@${calcFairOdd(d.probs.Next_A_c)}</span><span class="prob">${(d.probs.Next_A_c*100).toFixed(0)}% cond.</span></div>`:''}
+            </div>
+            ${matrixHTML}
+            ${mcHTML}`:''}  
+        </div>`;
+    });
+}
+
+window.onload=loadDB;
+</script>
+</body>
+</html>
