@@ -32,3 +32,6 @@ ENV/
 # IDE settings
 .idea/
 .vscode/
+
+# Match scan logs (runtime data; not committed)
+data/logs/*.jsonl

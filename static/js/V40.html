@@ -176,7 +176,7 @@
         <input type="text" id="matchName" placeholder="Nome Match" maxlength="50">
         <label class="checkbox-group"><input type="checkbox" id="isKnockout"> Torneo/Must-Win</label>
         <button class="btn-save" onclick="saveCurrentMatch()">💾 Salva</button>
-        <button class="btn-save" style="background:transparent;color:var(--matrix-green);border-color:var(--matrix-green);font-size:0.78em" onclick="const s=prompt('Score finale (es. 2-1):');if(s&&s.includes('-')){const n=document.getElementById('matchName').value.trim();if(n)saveMatchResult(n,s.trim());}" title="Salva risultato per tracking accuratezza">📊 RIS.</button>
+        <button class="btn-save" style="background:transparent;color:var(--matrix-green);border-color:var(--matrix-green);font-size:0.78em" onclick="const s=prompt('Score finale (es. 2-1):');if(s&&s.includes('-')){const n=document.getElementById('matchName').value.trim();if(n){saveMatchResult(n,s.trim());postFinalToBackend(n,s.trim());}}" title="Salva risultato per tracking accuratezza">📊 RIS.</button>
         <button class="btn-del"  onclick="deleteCurrentMatch()">🗑️ Del</button>
         <button class="btn-exp"  onclick="exportDB()">📤 Export</button>
         <button class="btn-exp" style="background:transparent;color:var(--kelly-blue);border-color:var(--kelly-blue)" onclick="showDashboard()" title="Dashboard statistiche personali">📈 Stats</button>
@@ -250,6 +250,7 @@
     <div style="display:flex;gap:6px"><button class="btn-scan" id="btnScan" style="flex:1" onclick="runOracleScanner()">🔮 ESEGUI V40 SCAN</button><button class="btn-exp" style="width:auto;padding:0 16px;font-size:1.1em" onclick="clearLiveFields()" title="Azzera campi live">🔄</button><button id="btnEngineToggle" onclick="_toggleEngine()" title="Alterna motore di calcolo JS (default) ↔ Python" style="background:transparent;border:1px solid var(--text-muted);color:var(--text-muted);padding:0 12px;cursor:pointer;font-family:monospace;font-size:0.75em;font-weight:bold;white-space:nowrap;transition:0.2s">⚙️ Engine: JS</button></div>
 
     <!-- [UPGRADE V25] Quote bookie per edge check in tempo reale nell'Oracle Verdict -->
+    <div id="panelBookieOdds" style="display:none">
     <div class="section-title" style="color:var(--kelly-blue)">3. Quote bookie (opzionale) <span style="color:#444;font-size:0.85em">(opzionale)</span></div>
     <div class="input-grid" style="grid-template-columns:repeat(4,1fr);background:rgba(184,41,248,0.03);border:1px solid rgba(184,41,248,0.15);">
         <div class="input-group"><label style="color:var(--matrix-green)">@1 Bookie</label><input type="text" id="bk1" placeholder="es. 2.50"></div>
@@ -261,7 +262,9 @@
         <div class="input-group"><label>@Under 2.5 Bookie</label><input type="text" id="bkU25" placeholder="es. 1.85"></div>
         <div class="input-group"><label style="color:var(--steam-color)">@Next Gol Casa</label><input type="text" id="bkNH" placeholder="es. 2.10"></div>
     </div>
+    </div>
 
+    <div id="panelKellyStake" style="display:none">
     <div class="section-title" style="color:var(--kelly-blue)">4. Gestione stake (Kelly)</div>
     <div class="kelly-grid">
         <div class="input-group"><label>Bankroll (€)</label><input type="number" id="bankroll" value="100" min="1"></div>
@@ -271,6 +274,7 @@
         <div class="input-group"><label>Frazi.</label><select id="kellyFrac"><option value="0.25">1/4</option><option value="0.5" selected>1/2</option></select></div>
     </div>
     <button class="btn-kelly" onclick="calculateKelly()">⚖️ Calcola Stake (VIX-Adjusted)</button>
+    </div>
 
     <div id="logContainer"></div>
 </div>
@@ -285,6 +289,22 @@
 const _APEX_API_PORT = '__APEX_API_PORT__';  // replaced at runtime by Streamlit
 const _APEX_API_BASE = (_APEX_API_PORT && _APEX_API_PORT !== '__APEX_API_PORT__')
     ? `http://127.0.0.1:${_APEX_API_PORT}` : null;
+
+// ── Helper: send final score to backend for server-side logging ──
+async function postFinalToBackend(matchName, scoreStr) {
+    if (!_APEX_API_BASE) return;
+    const parts = scoreStr.split('-').map(s => parseInt(s.trim(), 10));
+    if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) return;
+    try {
+        await fetch(`${_APEX_API_BASE}/api/final`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ matchName: matchName, hgFT: parts[0], agFT: parts[1] })
+        });
+    } catch (e) {
+        console.warn('Failed to POST /api/final:', e);
+    }
+}
 
 // Engine mode: 'js' (default) or 'py'
 let _apexEngineMode = 'js';

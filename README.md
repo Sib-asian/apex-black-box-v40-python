@@ -85,3 +85,61 @@ POST `/api/scan` — payload fields (all optional, default 0):
 - **Port conflict**: app tries 5050-5100 automatically; stop other servers if needed
 - **CORS errors**: Flask-CORS is enabled; API binds to 127.0.0.1 only
 - **PY vs JS differences**: minor floating-point deltas are normal; JS is the reference
+
+---
+
+## Logging & Evaluation
+
+### Where logs are stored
+
+When the **Python engine** (`⚙️ Engine: PY`) is active, every scan and final result
+is automatically appended to:
+
+```
+data/logs/<match_id>.jsonl
+```
+
+Each file is a newline-delimited JSON (JSONL) stream.  One file is created per
+match (the match name is normalised to a safe file-system identifier).
+
+**Scan entries** (`type: "scan"`) are written at:
+
+| Tag | When written |
+|-----|-------------|
+| `snap_20` | First scan at or after minute 20 |
+| `snap_40` | First scan at or after minute 40 |
+| `snap_60` | First scan at or after minute 60 |
+| `snap_80` | First scan at or after minute 80 |
+| `goal_event` | Any scan where the score changed since the last logged scan |
+| `red_event` | Any scan where the red-card count changed since the last logged scan |
+
+**Final score entries** (`type: "final"`) are appended when you press the
+**📊 RIS.** button and the backend is reachable.
+
+### How to record a final score
+
+1. At full-time, click **📊 RIS.** in the memory bar.
+2. Enter the final score in `H-A` format (e.g. `2-1`).
+3. Click **OK** — the result is saved in localStorage *and* sent to the backend.
+
+The backend endpoint is `POST /api/final` (body: `{ matchName, hgFT, agFT }`).
+If the backend is unavailable the call fails silently and only localStorage is updated.
+
+### How to run the evaluation script
+
+```bash
+python tools/evaluate_logs.py
+# optional: specify a custom log directory
+python tools/evaluate_logs.py --log-dir data/logs
+```
+
+The script requires **no external dependencies** (pure Python 3.9+).
+
+Output includes:
+
+- Mean Brier score per market (`1X2`, `Over2.5`, `Over1.5`, `BTTS`) broken down
+  by snapshot tag and overall.
+- ECE-like 10-bin calibration table for binary markets.
+
+> **Note**: only matches that have *both* at least one scan *and* a final score
+> recorded contribute to the evaluation metrics.
