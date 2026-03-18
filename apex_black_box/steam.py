@@ -27,3 +27,12 @@ class SteamAnalyzer:
             float(self.quotes.get("tC", 2.5)),
             float(self.quotes.get("sC", 0)),
         )
+
+    def reset(self) -> None:
+        """Invalidate cached result so detect_movement() will recompute on next call."""
+        self._result = None
+
+    def update_quotes(self, quotes: dict) -> None:
+        """Update quotes and invalidate the cache (forces re-detection on next call)."""
+        self.quotes = quotes
+        self._result = None

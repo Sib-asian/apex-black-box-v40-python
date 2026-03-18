@@ -44,6 +44,16 @@ MULT_GUARD_MIN: float = 0.35  # total modifiers may not fall below ×0.35
 # #1: Increased SIMS from 5k to 10k for better Monte Carlo accuracy
 _SIMS_ET: int = 10000
 
+# FIX 2: Negative Binomial over-dispersion coefficient.
+# Football goal counts exhibit over-dispersion (Var > Mean); alpha in [0.10, 0.20]
+# is well-supported by the literature. 0.15 is a conservative central estimate.
+NB_ALPHA: float = 0.15
+
+# FIX 7: Extra-time simulation cache (key: rounded lambda pair, value: result dict)
+_ET_CACHE: dict[tuple, dict] = {}
+_ET_CACHE_MAX: int = 256
+_ET_CACHE_LOCK = threading.Lock()
+
 # log-factorial cache (up to 30)
 _LFC: list[float] = [0.0]
 _LFC_LOCK = threading.Lock()  # F5: thread-safe cache
@@ -110,13 +120,15 @@ def rhythm_curve(m: float) -> float:
     """#6: Improved rhythm_curve — smoother recovery after goals and late-game push.
 
     Phase structure:
-      0–15 min  : warm-up / slow start  (×0.82)
-      15–30 min : building up           (×0.90)
-      30–60 min : steady play           (×0.95)
-      60–75 min : late-game pressure    (×1.08)
-      75–85 min : final push            (×1.28)
-      85–90 min : desperation / injury  (×1.35)
-      >90 min   : extra time recovery   (×1.10)
+      0–15 min    : warm-up / slow start         (×0.82)
+      15–30 min   : building up                  (×0.90)
+      30–60 min   : steady play                  (×0.95)
+      60–75 min   : late-game pressure            (×1.08)
+      75–90 min   : final push, linear 1.28→1.35
+      ET1 91'–105': extra time first half         (×1.10)
+      ET2 106'–120': extra time second half,
+                     linear interpolation 1.10→1.18
+                     (higher intensity near penalty shootout)
     """
     if m < 15:
         r = 0.82
@@ -131,7 +143,14 @@ def rhythm_curve(m: float) -> float:
         t = (m - 75) / 15.0
         r = 1.28 + t * (1.35 - 1.28)
     else:
-        r = 1.10
+        # Extra time: ET1 (91'-105') → 1.10, ET2 (106'-120') interpolated up to 1.18.
+        # ET2 intensity peaks near the penalty shootout threshold; 1.18 is a conservative
+        # upper bound consistent with football intensity research for extra time phases.
+        if m <= 105:
+            r = 1.10
+        else:
+            t = clamp((m - 105) / 15.0, 0.0, 1.0)
+            r = 1.10 + t * (1.18 - 1.10)
     return r / RHYTHM_NORM
 
 
@@ -250,7 +269,9 @@ def build_result_matrix(l_h: float, l_a: float, min_: float) -> list[dict]:
     for h in range(max_g + 1):
         for a in range(max_g + 1):
             dc = max(0.005, dc_correction_adaptive(h, a, l_h, l_a, min_))
-            p = poisson_pmf(l_h, h) * poisson_pmf(l_a, a) * dc
+            # FIX 2: Use Negative Binomial PMF (alpha=NB_ALPHA) instead of pure Poisson.
+            # NB captures over-dispersion in football goal scoring (Var > Mean).
+            p = nb_pmf(l_h, h, NB_ALPHA) * nb_pmf(l_a, a, NB_ALPHA) * dc
             # NaN/Inf guard: treat non-finite cells as zero probability
             if not math.isfinite(p) or p < 0:
                 p = 0.0
@@ -277,7 +298,24 @@ def build_result_matrix(l_h: float, l_a: float, min_: float) -> list[dict]:
     return matrix
 
 
-def aggregate_from_matrix(matrix: list[dict], hg_now: int, ag_now: int) -> dict:
+def aggregate_from_matrix(
+    matrix: list[dict],
+    hg_now: int,
+    ag_now: int,
+    dyn_over: float | None = None,
+) -> dict:
+    """Aggregate probabilities from a result matrix.
+
+    Parameters
+    ----------
+    matrix   : score-probability grid from build_result_matrix()
+    hg_now   : current home goals (already scored)
+    ag_now   : current away goals (already scored)
+    dyn_over : dynamic Over line applied to the final total (fh + fa).
+               If provided, pOver = P(fh + fa > dyn_over).
+               If None, falls back to the classic (h + a) >= 1 semantics
+               for backward compatibility.
+    """
     p1 = px = p2 = p_over = p_over25 = p_btts = p_dnb_h = p_dnb_a = p_over15 = p_over35 = 0.0
     for cell in matrix:
         h, a, p = cell["h"], cell["a"], cell["p"]
@@ -291,8 +329,14 @@ def aggregate_from_matrix(matrix: list[dict], hg_now: int, ag_now: int) -> dict:
             p_dnb_a += p
         else:
             px += p
-        if (h + a) >= 1:
-            p_over += p
+        # FIX 1: if dyn_over is provided, pOver = P(total final > dyn_over);
+        # otherwise keep legacy (h + a) >= 1 semantics for backward compatibility.
+        if dyn_over is not None:
+            if (fh + fa) > dyn_over:
+                p_over += p
+        else:
+            if (h + a) >= 1:
+                p_over += p
         if (fh + fa) > 2.5:
             p_over25 += p
         if (fh + fa) > 1.5:
@@ -310,6 +354,7 @@ def aggregate_from_matrix(matrix: list[dict], hg_now: int, ag_now: int) -> dict:
         "p1X": p1 + px, "pX2": p2 + px, "p12": p1 + p2,
         "pDNB_H": (p_dnb_h / dnb) if dnb > 0 else 0.0,
         "pDNB_A": (p_dnb_a / dnb) if dnb > 0 else 0.0,
+        "dynOver": dyn_over,  # expose for debug/traceability
     }
 
 
@@ -326,6 +371,16 @@ def poisson_sample(lam: float) -> int:
 
 
 def simulate_extra_time(l_h: float, l_a: float, seed: int | None = None) -> dict:
+    # FIX 7: Cache results for rounded lambda values to avoid repeated expensive
+    # Monte Carlo runs (10 000 sims) on identical inputs.  Cache is bypassed when
+    # a deterministic seed is provided (seeded calls are already deterministic).
+    cache_key = (round(l_h, 2), round(l_a, 2))
+    if seed is None:
+        with _ET_CACHE_LOCK:
+            cached = _ET_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
     # #1: SIMS increased from 5000 to 10000 for better accuracy
     # Determinism: if seed is provided, use an isolated RNG so callers with the
     # same lambda values and seed always get identical output regardless of the
@@ -361,10 +416,18 @@ def simulate_extra_time(l_h: float, l_a: float, seed: int | None = None) -> dict
                 res_ph += 1
             else:
                 res_pa += 1
-    return {
+    result = {
         "etH": res_h / SIMS, "etA": res_a / SIMS,
         "penH": res_ph / SIMS, "penA": res_pa / SIMS,
     }
+
+    if seed is None:
+        with _ET_CACHE_LOCK:
+            if len(_ET_CACHE) >= _ET_CACHE_MAX:
+                # Evict oldest entry (FIFO via dict insertion order)
+                _ET_CACHE.pop(next(iter(_ET_CACHE)))
+            _ET_CACHE[cache_key] = result
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -597,7 +660,61 @@ def build_steam_advice(
             "confidence_req": 0.45,
         })
 
-    return advice
+    # ── FIX 12: Weak signal explicit warning ──────────────
+    if level == "weak":
+        advice.append({
+            "market": "ℹ️ Segnale debole",
+            "reason": "Il movimento delle quote è insufficiente per un segnale affidabile. Procedere con cautela.",
+            "strength": "debole",
+            "confidence_req": 0.0,
+        })
+
+    # ── FIX 3: Deduplication by market family ─────────────
+    def _advice_family(mkt: str) -> str:
+        if "ℹ️" in mkt or "⚠️" in mkt:
+            return "warning"
+        if "Combo: Casa" in mkt:
+            return "combo_casa"
+        if "Combo: Trasferta" in mkt:
+            return "combo_trasf"
+        if "AH Casa" in mkt:
+            return "AH_casa"
+        if "AH Trasferta" in mkt:
+            return "AH_trasf"
+        if mkt.startswith("Over"):
+            return "over"
+        if mkt.startswith("Under"):
+            return "under"
+        if "BTTS" in mkt:
+            return "btts"
+        if "Casa" in mkt:
+            return "1x2_casa"
+        if "Trasferta" in mkt:
+            return "1x2_trasf"
+        return "other"
+
+    _STRENGTH_ORDER = {"forte": 0, "medio": 1, "debole": 2}
+
+    def _strength_rank(adv: dict) -> int:
+        return _STRENGTH_ORDER.get(adv.get("strength", "debole"), 2)
+
+    seen_families: dict[str, dict] = {}
+    for adv in advice:
+        fam = _advice_family(adv.get("market", ""))
+        current = seen_families.get(fam)
+        if current is None:
+            seen_families[fam] = adv
+        else:
+            # Keep the one with higher strength; ties keep the first
+            if _strength_rank(adv) < _strength_rank(current):
+                seen_families[fam] = adv
+
+    # Rebuild advice in strength order (forte → medio → debole)
+    deduplicated = sorted(
+        seen_families.values(),
+        key=lambda a: _STRENGTH_ORDER.get(a.get("strength", "debole"), 2),
+    )
+    return deduplicated
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1066,8 +1183,10 @@ def scan(payload: dict) -> dict:
     naked_xg_a = round(ag + proj_a, 2)
 
     # ── Matrix ────────────────────────────────────────────────────
+    # FIX 1: compute dyn_over here so it can be passed to aggregate_from_matrix()
+    dyn_over = float(hg + ag) + 0.5
     matrix = build_result_matrix(proj_h, proj_a, minute)
-    agg = aggregate_from_matrix(matrix, hg, ag)
+    agg = aggregate_from_matrix(matrix, hg, ag, dyn_over=dyn_over)
 
     p00_dc = next((c["p"] for c in matrix if c["h"] == 0 and c["a"] == 0), 0.0)
     p_goal = clamp01(1 - p00_dc)
@@ -1097,7 +1216,7 @@ def scan(payload: dict) -> dict:
     # Goals are integers, so ceil(hg+ag) = hg+ag, giving hg+ag+0.5 always.
     # This ensures dyn_over ∈ {0.5, 1.5, 2.5, 3.5, 4.5, ...} and P(O_Dyn)
     # is always the probability of at least 1 more goal (a tradable market).
-    dyn_over = float(hg + ag) + 0.5
+    # dyn_over is already computed above and passed to aggregate_from_matrix().
     p_btts = agg["pBTTS"]
 
     # ── Extra time ───────────────────────────────────────────────
@@ -1360,6 +1479,9 @@ def scan(payload: dict) -> dict:
     # p_over is already shrunk, so this is consistent with the matrix model.
     p_no_more = clamp01(1.0 - p_over)
 
+    # FIX 13: compute steam advice once and expose both inside steam dict and at top level
+    _steam_advice = build_steam_advice(steam, t_c, s_c)
+
     _result = {
         "probs": {
             "1": p1, "X": px, "2": p2,
@@ -1396,7 +1518,7 @@ def scan(payload: dict) -> dict:
             "dSpread": round(steam["dSpread"], 2),
             "dTotal": round(steam["dTotal"], 2),
             "signals": steam["signals"],
-            "advice": build_steam_advice(steam, t_c, s_c),  # 3b: pre-match advice
+            "advice": _steam_advice,  # FIX 13: pre-match advice (also at top-level steamAdvice)
         },
         "vixDetail": {
             "H": str(round(vix_h)),
@@ -1439,6 +1561,8 @@ def scan(payload: dict) -> dict:
             "xgQualH": round(xg_obs_pure_h, 2), "xgQualA": round(xg_obs_pure_a, 2),
             "halfPeriod": "PT" if minute <= 45 else "ST",
         },
+        # FIX 13: top-level steamAdvice for direct frontend access (mirrors steam.advice)
+        "steamAdvice": _steam_advice,
     }
 
     # ── Compute verdict via Python verdict engine ─────────────────

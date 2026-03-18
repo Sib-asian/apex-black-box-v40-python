@@ -109,10 +109,10 @@ def generate_verdict(
     over15_prob = _safe(probs.get("Over15"), 0.0)
     under25_prob = _safe(probs.get("Under25"), 0.0)
 
-    dc1x = _safe(probs.get("DC_1X"), 0.0) or (
+    dc1x = _safe(probs.get("DC_1X"), 0.0) or clamp01(
         _safe(probs.get("1"), 0.0) + _safe(probs.get("X"), 0.0)
     )
-    dcx2 = _safe(probs.get("DC_X2"), 0.0) or (
+    dcx2 = _safe(probs.get("DC_X2"), 0.0) or clamp01(
         _safe(probs.get("2"), 0.0) + _safe(probs.get("X"), 0.0)
     )
 
@@ -497,8 +497,47 @@ def generate_verdict(
 
     valid_candidates = sorted(green + watch, key=lambda m: -m["p"])
     top_pick = valid_candidates[0] if valid_candidates else None
-    alt_pick = valid_candidates[1] if len(valid_candidates) > 1 else None
-    spec_pick = sorted(spec, key=lambda m: -m["p"])[0] if spec else None
+
+    # FIX 4: Diversify alt_pick — prefer a pick from a different market family than top_pick.
+    # Market families to avoid correlated picks (goal/result/AH are largely independent).
+    _GOAL_FAMILY = {"over", "over15", "over35", "under25", "under35", "btts"}
+    _RESULT_FAMILY = {"1", "X", "2", "dc1X", "dcX2"}
+    _AH_FAMILY = {"nextH", "nextA", "nextH_chase"}
+
+    def _market_family(mid: str) -> str:
+        if mid in _GOAL_FAMILY:
+            return "goal"
+        if mid in _RESULT_FAMILY:
+            return "result"
+        if mid in _AH_FAMILY or mid.startswith("ah_steam_"):
+            return "ah"
+        return "other"
+
+    top_family = _market_family(top_pick["id"]) if top_pick else None
+
+    alt_pick = None
+    if len(valid_candidates) > 1:
+        # Try to find a pick from a different family
+        for c in valid_candidates[1:]:
+            if _market_family(c["id"]) != top_family:
+                alt_pick = c
+                break
+        # If all remaining picks are in the same family, fall back to index [1]
+        if alt_pick is None:
+            alt_pick = valid_candidates[1]
+
+    alt_family = _market_family(alt_pick["id"]) if alt_pick else None
+
+    # FIX 4: spec_pick should be from a different family than both top and alt
+    spec_sorted = sorted(spec, key=lambda m: -m["p"])
+    spec_pick = None
+    for s in spec_sorted:
+        sf = _market_family(s["id"])
+        if sf != top_family and sf != alt_family:
+            spec_pick = s
+            break
+    if spec_pick is None and spec_sorted:
+        spec_pick = spec_sorted[0]
 
     return {
         "topPick": top_pick,

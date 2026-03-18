@@ -15,6 +15,7 @@ GET /api/health
 
 import json
 import re
+import time
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,8 +62,9 @@ def _append_jsonl(match_id: str, obj: dict) -> None:
 
 
 # ── Per-match scan-state for schema-4 snapshot + event dedup ─────
-_SNAP_MINUTES = [20, 40, 60, 80]
-_SNAP_TAGS = ["snap_20", "snap_40", "snap_60", "snap_80"]
+# FIX 6: Added snap_5, snap_10 (early match) and snap_88 (late/final).
+_SNAP_MINUTES = [5, 10, 20, 40, 60, 80, 88]
+_SNAP_TAGS = ["snap_5", "snap_10", "snap_20", "snap_40", "snap_60", "snap_80", "snap_88"]
 
 # match_id -> { next_snap_idx, last_hg, last_ag, last_rcH, last_rcA }
 _match_states: dict[str, dict] = {}
@@ -80,6 +82,53 @@ def _get_match_state(match_id: str) -> dict:
                 "last_rcA": -1,
             }
         return _match_states[match_id]
+
+
+# ── FIX 11: Payload sanitization ─────────────────────────────────
+# Whitelist of fields to include in the logged payload.
+_PAYLOAD_WHITELIST = frozenset([
+    "min", "rec", "hg", "ag", "lastGoal",
+    "sotH", "misH", "corH", "daH",
+    "sotA", "misA", "corA", "daA",
+    "rcH", "rcA", "tC", "tO", "sC", "sO",
+    "isKnockout", "possH", "possA",
+])
+_MAX_STRING_LENGTH = 200  # max characters for any string field in sanitized payload
+
+
+def _sanitize_payload(payload: dict) -> dict:
+    """Return a sanitized copy of payload with only whitelisted fields.
+
+    Truncates string values to _MAX_STRING_LENGTH chars and omits large fields like prevScans.
+    """
+    result: dict = {}
+    for key in _PAYLOAD_WHITELIST:
+        if key in payload:
+            val = payload[key]
+            if isinstance(val, str):
+                val = val[:_MAX_STRING_LENGTH]
+            result[key] = val
+    return result
+
+
+# ── FIX 9: Per-match rate limiting ───────────────────────────────
+_RATE_LIMIT_WINDOW: float = 1.0   # seconds
+_RATE_LIMIT_MAX: int = 10         # max requests per window per match_id
+_rate_buckets: dict[str, list[float]] = {}
+_rate_lock = threading.Lock()
+
+
+def _check_rate_limit(match_id: str) -> bool:
+    """Returns True if request is allowed, False if rate limited."""
+    now = time.monotonic()
+    with _rate_lock:
+        bucket = _rate_buckets.setdefault(match_id, [])
+        # Remove timestamps older than the window
+        _rate_buckets[match_id] = [t for t in bucket if now - t < _RATE_LIMIT_WINDOW]
+        if len(_rate_buckets[match_id]) >= _RATE_LIMIT_MAX:
+            return False
+        _rate_buckets[match_id].append(now)
+        return True
 
 
 def _maybe_log_scan(match_id: str, match_name: str, payload: dict, result: dict) -> None:
@@ -127,6 +176,9 @@ def _maybe_log_scan(match_id: str, match_name: str, payload: dict, result: dict)
         "raw": result.get("raw"),
     }
 
+    # FIX 11: log only the sanitized subset of the payload (no prevScans, no steam quotes)
+    sanitized = _sanitize_payload(payload)
+
     for tag in tags_to_log:
         entry = {
             "type": "scan",
@@ -136,7 +188,7 @@ def _maybe_log_scan(match_id: str, match_name: str, payload: dict, result: dict)
             "engine_version": ENGINE_VERSION,
             "ts": ts,
             "minute": minute,
-            "payload": payload,
+            "payload": sanitized,
             "engine": engine_data,
         }
         _append_jsonl(match_id, entry)
@@ -152,10 +204,15 @@ def health():
 @app.route("/api/scan", methods=["POST"])
 def scan():
     payload = request.get_json(force=True, silent=True) or {}
+    match_name = str(payload.get("matchName", ""))
+    match_id = _safe_match_id(match_name)
+
+    # FIX 9: Rate limit per match_id to prevent runaway frontend loops
+    if match_id and not _check_rate_limit(match_id):
+        return jsonify({"error": "Too many requests"}), 429
+
     try:
         result = engine.scan(payload)
-        match_name = str(payload.get("matchName", ""))
-        match_id = _safe_match_id(match_name)
         if match_id and match_id != "unknown_match":
             _maybe_log_scan(match_id, match_name, payload, result)
         return jsonify(result)
