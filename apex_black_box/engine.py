@@ -53,6 +53,19 @@ def safe_num(v: Any, fallback: float = 0.0) -> float:
     return float(fallback)
 
 
+def finite_or(x: Any, fallback: float = 0.0) -> float:
+    """Return x as float if finite, else fallback.
+
+    Safer than safe_num for use in divisions, logs, and exponents where
+    any non-finite result should be replaced with a safe neutral value.
+    """
+    try:
+        v = float(x)
+        return v if math.isfinite(v) else fallback
+    except (TypeError, ValueError):
+        return fallback
+
+
 def renormalize_1x2(p1: float, px: float, p2: float) -> tuple[float, float, float]:
     s = p1 + px + p2
     if not math.isfinite(s) or s <= 0:
@@ -210,6 +223,11 @@ def dc_correction_adaptive(h: int, a: int, l_h: float, l_a: float, min_: float) 
 
 
 def build_result_matrix(l_h: float, l_a: float, min_: float) -> list[dict]:
+    # Guard: replace any non-finite lambda with a safe neutral value
+    l_h = finite_or(l_h, 0.70)
+    l_a = finite_or(l_a, 0.70)
+    l_h = max(l_h, 0.01)
+    l_a = max(l_a, 0.01)
     max_g = max(9, math.ceil(max(l_h, l_a)) + 5)
     matrix: list[dict] = []
     total = 0.0
@@ -217,8 +235,26 @@ def build_result_matrix(l_h: float, l_a: float, min_: float) -> list[dict]:
         for a in range(max_g + 1):
             dc = max(0.005, dc_correction_adaptive(h, a, l_h, l_a, min_))
             p = poisson_pmf(l_h, h) * poisson_pmf(l_a, a) * dc
+            # NaN/Inf guard: treat non-finite cells as zero probability
+            if not math.isfinite(p) or p < 0:
+                p = 0.0
             matrix.append({"h": h, "a": a, "p": p})
             total += p
+    _EPS = 1e-12
+    if total <= _EPS:
+        # Fallback: rebuild with safe Poisson-only (no DC) using clamped lambdas
+        # This ensures the matrix always sums to ~1 even with extreme inputs.
+        _fb_h = clamp(l_h, 0.30, 2.50)
+        _fb_a = clamp(l_a, 0.30, 2.50)
+        matrix = []
+        total = 0.0
+        for h in range(max_g + 1):
+            for a in range(max_g + 1):
+                p = poisson_pmf(_fb_h, h) * poisson_pmf(_fb_a, a)
+                if not math.isfinite(p) or p < 0:
+                    p = 0.0
+                matrix.append({"h": h, "a": a, "p": p})
+                total += p
     if total > 0:
         for cell in matrix:
             cell["p"] /= total
@@ -273,23 +309,39 @@ def poisson_sample(lam: float) -> int:
             return k - 1
 
 
-def simulate_extra_time(l_h: float, l_a: float) -> dict:
+def simulate_extra_time(l_h: float, l_a: float, seed: int | None = None) -> dict:
     # #1: SIMS increased from 5000 to 10000 for better accuracy
+    # Determinism: if seed is provided, use an isolated RNG so callers with the
+    # same lambda values and seed always get identical output regardless of the
+    # global random state.
     SIMS = _SIMS_ET
+    rng = random.Random(seed)
     et_h1 = l_h * 0.78 * (15 / 90)
     et_a1 = l_a * 0.78 * (15 / 90)
     et_h2 = l_h * 0.87 * (15 / 90)
     et_a2 = l_a * 0.87 * (15 / 90)
     res_h = res_a = res_ph = res_pa = 0
+
+    def _poisson_sample_rng(lam: float) -> int:
+        if lam <= 0:
+            return 0
+        L = math.exp(-lam)
+        k, p = 0, 1.0
+        while True:
+            k += 1
+            p *= rng.random()
+            if p <= L:
+                return k - 1
+
     for _ in range(SIMS):
-        g_h = poisson_sample(et_h1) + poisson_sample(et_h2)
-        g_a = poisson_sample(et_a1) + poisson_sample(et_a2)
+        g_h = _poisson_sample_rng(et_h1) + _poisson_sample_rng(et_h2)
+        g_a = _poisson_sample_rng(et_a1) + _poisson_sample_rng(et_a2)
         if g_h > g_a:
             res_h += 1
         elif g_a > g_h:
             res_a += 1
         else:
-            if random.random() < 0.52:
+            if rng.random() < 0.52:
                 res_ph += 1
             else:
                 res_pa += 1
@@ -431,6 +483,50 @@ def scan(payload: dict) -> dict:
     alerts: list[dict] = []
     safe_min = max(1.0, float(minute))
     match_name = payload.get("matchName", "")
+
+    # ── Input quality flags ──────────────────────────────────────
+    # Detect inconsistent or implausible inputs; flag them without breaking output.
+    _input_flags: list[str] = []
+    _iq_penalty: float = 0.0
+    if not 0 <= minute <= 125:
+        _input_flags.append("minute_out_of_range")
+        _iq_penalty += 0.10
+    if hg < 0 or ag < 0:
+        _input_flags.append("negative_goals")
+        _iq_penalty += 0.15
+    if sot_h < 0 or sot_a < 0:
+        _input_flags.append("negative_sot")
+        _iq_penalty += 0.10
+    if mis_h < 0 or mis_a < 0:
+        _input_flags.append("negative_mis")
+        _iq_penalty += 0.05
+    if da_h < 0 or da_a < 0:
+        _input_flags.append("negative_da")
+        _iq_penalty += 0.05
+    if cor_h < 0 or cor_a < 0:
+        _input_flags.append("negative_corners")
+        _iq_penalty += 0.05
+    # Possession sum check (raw values, before clamping)
+    if poss_h_raw > 0 and poss_a_raw > 0:
+        poss_sum_raw = poss_h_raw + poss_a_raw
+        if abs(poss_sum_raw - 100) > 15:
+            _input_flags.append("possession_sum_implausible")
+            _iq_penalty += 0.05
+    # Shot rate implausibility (> 2 shots/min is physically impossible)
+    if minute > 0:
+        ts_h_rate = (sot_h + mis_h) / minute
+        ts_a_rate = (sot_a + mis_a) / minute
+        if ts_h_rate > 2.0:
+            _input_flags.append("shots_rate_implausible_H")
+            _iq_penalty += 0.05
+        if ts_a_rate > 2.0:
+            _input_flags.append("shots_rate_implausible_A")
+            _iq_penalty += 0.05
+    # t_c plausibility
+    if not math.isfinite(t_c) or t_c <= 0.5 or t_c > 9.0:
+        _input_flags.append("total_implausible")
+        _iq_penalty += 0.10
+    _iq_penalty = clamp(_iq_penalty, 0.0, 0.40)
 
     # ── Steam ────────────────────────────────────────────────────
     steam = analyze_steam(s_o, s_c, t_o, t_c)
@@ -793,13 +889,28 @@ def scan(payload: dict) -> dict:
     agg = aggregate_from_matrix(matrix, hg, ag)
 
     p00_dc = next((c["p"] for c in matrix if c["h"] == 0 and c["a"] == 0), 0.0)
-    p_goal = 1 - p00_dc
+    p_goal = clamp01(1 - p00_dc)
     total_proj = proj_h + proj_a
 
-    next_h_cond = proj_h / total_proj if total_proj > 0 else 0.0
-    next_a_cond = proj_a / total_proj if total_proj > 0 else 0.0
-    next_h_abs = next_h_cond * p_goal
-    next_a_abs = next_a_cond * p_goal
+    # Hazard-based next-goal: P(next goal is home | goal scored) = λ_H / (λ_H + λ_A).
+    # When total_proj is negligible (very late game), fall back to instantaneous hazard
+    # ratio so Next_H + Next_A = 1 and both are in [0, 1].
+    if total_proj > 1e-6:
+        next_h_cond = finite_or(proj_h / total_proj, 0.5)
+        next_a_cond = finite_or(proj_a / total_proj, 0.5)
+    else:
+        _lsum = lambda_h + lambda_a
+        if _lsum > 1e-9:
+            next_h_cond = finite_or(lambda_h / _lsum, 0.5)
+            next_a_cond = finite_or(lambda_a / _lsum, 0.5)
+        else:
+            next_h_cond = 0.5
+            next_a_cond = 0.5
+    # Clamp to valid range; conditional probs must sum to ~1
+    next_h_cond = clamp01(next_h_cond)
+    next_a_cond = clamp01(next_a_cond)
+    next_h_abs = clamp01(next_h_cond * p_goal)
+    next_a_abs = clamp01(next_a_cond * p_goal)
 
     # A6: dyn_over is the next commercial half-point above the current score total.
     # Goals are integers, so ceil(hg+ag) = hg+ag, giving hg+ag+0.5 always.
@@ -811,7 +922,15 @@ def scan(payload: dict) -> dict:
     # ── Extra time ───────────────────────────────────────────────
     et_probs = None
     if is_ko and goal_diff == 0 and minute >= 88:
-        et_probs = simulate_extra_time(lambda_h, lambda_a)
+        # Deterministic seed derived from payload to ensure identical output for
+        # identical inputs (removes false oscillations in ET market).
+        # djb2-style polynomial hash: multiplier 31 gives good distribution for
+        # short ASCII strings and fits within a 31-bit integer.
+        _seed_str = f"{match_name}:{minute}:{hg}-{ag}:{t_c:.2f}:{s_c:.2f}"
+        _et_seed = 0
+        for _ch in _seed_str:
+            _et_seed = (_et_seed * 31 + ord(_ch)) & 0x7FFFFFFF
+        et_probs = simulate_extra_time(lambda_h, lambda_a, seed=_et_seed)
         alerts.append({"type": "chaos", "msg": "Tempi supplementari simulati — calcolo su 120 minuti totali."})
 
     # ── Analisi primo tempo ───────────────────────────────────────
@@ -953,6 +1072,9 @@ def scan(payload: dict) -> dict:
 
     # ── Anti-overconfidence shrink ────────────────────────────────
     dq = compute_data_quality(data_s, time_s, stab_q, confidence)
+    # Apply input quality penalty: reduce dq when inputs are inconsistent
+    # to prevent overconfident outputs with bad data.
+    dq = clamp(dq - _iq_penalty, 0.0, 1.0)
     ss = 0.35 * (1 - dq)
 
     # M9: Dynamic shrink bases from Poisson prior — when data is available,
@@ -1115,6 +1237,9 @@ def scan(payload: dict) -> dict:
             # #5: expose shrinkStrength and dataQuality
             "shrinkStrength": round(ss, 4),
             "dataQuality": round(dq, 4),
+            # Input quality flags: list of inconsistency tags detected in the payload.
+            # Empty list means no issues detected.
+            "inputQualityFlags": _input_flags,
         },
         "raw": {
             "min": int(minute), "hg": int(hg), "ag": int(ag),

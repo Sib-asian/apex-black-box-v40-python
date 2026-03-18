@@ -184,6 +184,79 @@ def pair_scans_with_final(
 BINARY_MARKETS = ["over25", "over15", "over35", "btts"]
 ALL_TAGS = ["snap_20", "snap_40", "snap_60", "snap_80", "goal_event", "red_event"]
 
+# Minute bucket definitions: [lo, hi) pairs; last bucket is open-ended (75–90+)
+MINUTE_BUCKETS = [(0, 15), (15, 30), (30, 45), (45, 60), (60, 75), (75, 999)]
+MINUTE_BUCKET_LABELS = ["0–15", "15–30", "30–45", "45–60", "60–75", "75–90+"]
+
+
+def _minute_bucket(minute: int) -> int:
+    """Return bucket index for the given minute (last bucket is open-ended)."""
+    for i, (lo, hi) in enumerate(MINUTE_BUCKETS):
+        if lo <= minute < hi:
+            return i
+    return len(MINUTE_BUCKETS) - 1
+
+
+def _goal_diff_bucket(goal_diff: int) -> str:
+    """Return a string key for the absolute goal-difference bucket.
+
+    Keys use the |gd| notation to make explicit that both +N and -N map to
+    the same bucket (we measure magnitude, not direction).
+    """
+    if goal_diff == 0:
+        return "|gd|=0"
+    if abs(goal_diff) == 1:
+        return "|gd|=1"
+    if abs(goal_diff) == 2:
+        return "|gd|=2"
+    return "|gd|≥3"
+
+
+class BreakdownAccumulator:
+    """Accumulates Brier and RPS by an arbitrary string key (minute bucket, game-state, etc.)."""
+
+    def __init__(self) -> None:
+        self.brier_1x2: dict[str, list[float]] = defaultdict(list)
+        self.rps: dict[str, list[float]] = defaultdict(list)
+        # binary market brier per bucket
+        self.brier_bin: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+
+    def add(
+        self,
+        key: str,
+        probs: dict[str, float | None],
+        labels: dict[str, float],
+    ) -> None:
+        p1, px, p2 = probs.get("1"), probs.get("X"), probs.get("2")
+        if all(v is not None for v in (p1, px, p2)):
+            bs = _brier_1x2(p1, px, p2, labels["1"], labels["X"], labels["2"])  # type: ignore[arg-type]
+            self.brier_1x2[key].append(bs)
+            rps = _rps_1x2(p1, px, p2, labels["1"], labels["X"], labels["2"])  # type: ignore[arg-type]
+            self.rps[key].append(rps)
+        for market in BINARY_MARKETS:
+            p = probs.get(market)
+            if p is not None:
+                self.brier_bin[key][market].append(_brier_binary(p, labels[market]))
+
+    def print_section(self, title: str, keys: list[str]) -> None:
+        """Print a summary table for the given ordered key list."""
+        print(f"\n  [{title}]")
+        header = f"  {'Bucket':<12}  {'Brier_1X2':>10}  {'RPS':>10}  {'n':>6}"
+        print(header)
+        print("  " + "-" * 46)
+        _na = f"{'—':>10}"
+        for key in keys:
+            brier_vals = self.brier_1x2.get(key, [])
+            rps_vals = self.rps.get(key, [])
+            if not brier_vals and not rps_vals:
+                continue
+            brier_avg = sum(brier_vals) / len(brier_vals) if brier_vals else float("nan")
+            rps_avg = sum(rps_vals) / len(rps_vals) if rps_vals else float("nan")
+            n = max(len(brier_vals), len(rps_vals))
+            b_str = f"{brier_avg:>10.4f}" if math.isfinite(brier_avg) else _na
+            r_str = f"{rps_avg:>10.4f}" if math.isfinite(rps_avg) else _na
+            print(f"  {key:<12}  {b_str}  {r_str}  {n:>6}")
+
 
 def _probs_from_scan(scan: dict) -> dict[str, float | None]:
     """Extract probability estimates from a logged scan entry."""
@@ -235,6 +308,10 @@ class MetricsAccumulator:
         self.logscore: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
         # bucket tables[market]
         self.buckets: dict[str, BucketTable] = {m: BucketTable() for m in BINARY_MARKETS}
+        # Breakdown accumulators (additive sections)
+        self.minute_bd = BreakdownAccumulator()
+        self.goal_diff_bd = BreakdownAccumulator()
+        self.rc_bd = BreakdownAccumulator()
 
     def add(self, tag: str, probs: dict[str, float | None], labels: dict[str, float]) -> None:
         # 1X2 multi-class Brier
@@ -266,6 +343,23 @@ class MetricsAccumulator:
             ls_bin = _log_score_binary(p, y)
             self.logscore[tag][market].append(ls_bin)
             self.logscore["_all"][market].append(ls_bin)
+
+    def add_breakdown(
+        self,
+        probs: dict[str, float | None],
+        labels: dict[str, float],
+        minute: int,
+        goal_diff: int,
+        has_rc: bool,
+    ) -> None:
+        """Accumulate metrics into per-minute, per-goal-diff, and rc-state breakdowns."""
+        min_key = MINUTE_BUCKET_LABELS[_minute_bucket(minute)]
+        gd_key = _goal_diff_bucket(goal_diff)
+        rc_key = "rc=yes" if has_rc else "rc=no"
+
+        self.minute_bd.add(min_key, probs, labels)
+        self.goal_diff_bd.add(gd_key, probs, labels)
+        self.rc_bd.add(rc_key, probs, labels)
 
     def print_summary(self) -> None:
         tags_order = ["_all"] + ALL_TAGS
@@ -330,6 +424,34 @@ class MetricsAccumulator:
             if any(self.brier["_all"].get(market, [])):
                 self.buckets[market].print_table(market)
 
+        # ── Breakdown sections (additive) ────────────────────────
+        has_minute = any(self.minute_bd.brier_1x2)
+        has_gd = any(self.goal_diff_bd.brier_1x2)
+        has_rc = any(self.rc_bd.brier_1x2)
+
+        if has_minute or has_gd or has_rc:
+            print("\n" + "─" * 70)
+            print("  BREAKDOWN METRICS (additive — Brier_1X2 and RPS per segment)")
+            print("─" * 70)
+
+        if has_minute:
+            self.minute_bd.print_section(
+                "By minute bucket — Brier_1X2 and RPS (lower = better)",
+                MINUTE_BUCKET_LABELS,
+            )
+
+        if has_gd:
+            self.goal_diff_bd.print_section(
+                "By goal difference — Brier_1X2 and RPS",
+                ["|gd|=0", "|gd|=1", "|gd|=2", "|gd|≥3"],
+            )
+
+        if has_rc:
+            self.rc_bd.print_section(
+                "By red-card state — Brier_1X2 and RPS",
+                ["rc=no", "rc=yes"],
+            )
+
         print()
 
 
@@ -372,6 +494,19 @@ def main(argv: list[str] | None = None) -> int:
             tag = scan.get("tag", "unknown")
             probs = _probs_from_scan(scan)
             acc.add(tag, probs, labels)
+
+            # Breakdown: extract context from scan entry
+            # Minute: prefer explicit "minute" field logged by api.py, else "min" in payload
+            payload = scan.get("payload") or {}
+            minute = int(_safe(scan.get("minute") or payload.get("min") or 0))
+            hg_now = int(_safe(payload.get("hg", 0)))
+            ag_now = int(_safe(payload.get("ag", 0)))
+            goal_diff = hg_now - ag_now
+            rc_h = int(_safe(payload.get("rcH", 0)))
+            rc_a = int(_safe(payload.get("rcA", 0)))
+            has_rc = (rc_h + rc_a) > 0
+            acc.add_breakdown(probs, labels, minute, goal_diff, has_rc)
+
             n_scans_total += 1
 
     print(f"\n[evaluate] Loaded {len(all_logs)} match(es), "
