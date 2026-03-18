@@ -85,7 +85,9 @@ def generate_verdict(
 
     vix_: float = _safe(data.get("vix"), 50.0)
     vix_adj = clamp((vix_ - 50) * 0.001, -0.030, 0.030)
-    green_thresh = clamp(0.62 - (conf / 88) * 0.08 + vix_adj, 0.52, 0.66)
+    is_gt = bool(data.get("isGarbageTime", False))
+    gt_adj = -0.03 if is_gt else 0.0  # 2h: lower threshold in garbage time
+    green_thresh = clamp(0.62 - (conf / 88) * 0.08 + vix_adj + gt_adj, 0.49, 0.66)
     watch_thresh = max(0.48, green_thresh - 0.06)
     spec_thresh = max(0.40, watch_thresh - 0.10)
 
@@ -98,7 +100,6 @@ def generate_verdict(
     rc_h = int(_safe(raw.get("rcH"), 0))
     rc_a = int(_safe(raw.get("rcA"), 0))
     last_goal = int(_safe(raw.get("lastGoal"), 0))
-    is_gt = bool(data.get("isGarbageTime", False))
 
     btts_ = _safe(probs.get("BTTS"), 0.0)
     p_over_dyn = _safe(probs.get("O_Dyn"), 0.0)
@@ -174,6 +175,29 @@ def generate_verdict(
     if ht_over > 0:
         markets.append({"id": "overHT", "name": "Over 0.5 HT", "p": ht_over, "bkKey": None})
 
+    # 4a: AH/Combo markets suggested by steam advice
+    steam_d = data.get("steam") or {}
+    steam_advice_list = steam_d.get("advice") or []
+    _ah_steam_idx = 0
+    for adv in steam_advice_list:
+        mkt_name = adv.get("market", "")
+        if "AH" in mkt_name or "Combo" in mkt_name:
+            if "Casa" in mkt_name:
+                implied_p = _safe(probs.get("DNB_H"), 0.0)
+            elif "Trasferta" in mkt_name:
+                implied_p = _safe(probs.get("DNB_A"), 0.0)
+            else:
+                implied_p = max(_safe(probs.get("1"), 0.0), _safe(probs.get("2"), 0.0))
+            if implied_p > 0.30:
+                markets.append({
+                    "id": f"ah_steam_{_ah_steam_idx}",
+                    "name": f"🧭 Pre-Match: {mkt_name}",
+                    "p": implied_p,
+                    "bkKey": None,
+                    "_steam_advice": adv,
+                })
+                _ah_steam_idx += 1
+
     # ── Context-intelligent scoring: 13 rules (mirrors JS V40 scoring block) ──
     for m in markets:
         score = 5
@@ -207,6 +231,10 @@ def generate_verdict(
                 score -= 4
             if diff_ == 0 and (hg + ag) <= 1:
                 score += 2
+            # 4d: penalise Over when steam signal is inverse (market expects fewer goals)
+            if steam_d.get("level") == "reverse":
+                score -= 2
+                reason = "steam inverso: Over controindicato"
         if m_id == "under25":
             if (hg + ag >= 2) and min_ > 70:
                 score -= 3
@@ -411,8 +439,12 @@ def generate_verdict(
             "kelly": kelly,
         })
 
-    # Sort by context score (desc), then probability (desc)
-    analyzed.sort(key=lambda m: (-(m.get("_score") or 5), -m["p"]))
+    # Sort by context score (desc), then edge as tiebreaker, then probability (desc)
+    analyzed.sort(key=lambda m: (
+        -(m.get("_score") or 5),
+        -(m.get("edge") or 0) * 0.5,  # 2g: edge as secondary tiebreaker
+        -m["p"],
+    ))
 
     def _is_eligible(m: dict) -> bool:
         if m["p"] > 0.80 and m["id"] not in exclude_from_trap:

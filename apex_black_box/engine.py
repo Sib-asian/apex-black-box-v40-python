@@ -35,7 +35,7 @@ def _get_verdict_module():
 # ─────────────────────────────────────────────────────────────────
 MEAN_GOALS_PER_MIN: float = 1.35 / 90
 DC_RHO: float = -0.10
-RHYTHM_NORM: float = (15 * 0.80 + 15 * 0.90 + 35 * 0.95 + 15 * 1.10 + 10 * 1.30) / 90
+RHYTHM_NORM: float = 1.0021111111111112  # mean of the raw rhythm values over [0,90), used to normalise rhythm_curve()
 
 # B1: Cumulative multiplier guard bounds (vs post-blend base_lambda)
 MULT_GUARD_MAX: float = 1.80  # total modifiers may not exceed ×1.80
@@ -126,10 +126,10 @@ def rhythm_curve(m: float) -> float:
         r = 0.95
     elif m < 75:
         r = 1.08
-    elif m < 85:
-        r = 1.28
     elif m < 90:
-        r = 1.35
+        # Linear interpolation: 75'→1.28, 90'→1.35 (smooth transition)
+        t = (m - 75) / 15.0
+        r = 1.28 + t * (1.35 - 1.28)
     else:
         r = 1.10
     return r / RHYTHM_NORM
@@ -381,32 +381,35 @@ def analyze_steam(s_o: float, s_c: float, t_o: float, t_c: float) -> dict:
     lambda_mod = {"h": 1.0, "a": 1.0}
 
     has_spread = ad_s >= 0.5
+    has_spread_strong = ad_s >= 1.5  # strong AH signal (for -0.75/-1.0 proposals)
     has_total = ad_t >= 0.25
     is_reverse = has_spread and d_total < -0.25 and d_spread < 0
     is_reverse_a = has_spread and d_total < -0.25 and d_spread > 0
 
     if has_spread:
-        mod = 1.0 + clamp(ad_s * 0.04, 0.02, 0.08)
+        # 2a: log1p scaling — more stable on extreme spreads (>2.0)
+        mod_spread = 1.0 + clamp(math.log1p(ad_s) * 0.055, 0.02, 0.09)
         if d_spread < 0:
             signals.append(f"Le quote favoriscono la casa: spread passato da {s_o} a {s_c}")
-            lambda_mod["h"] *= mod
-            lambda_mod["a"] *= (1 / mod)
+            lambda_mod["h"] *= mod_spread
+            lambda_mod["a"] *= (1 / mod_spread)
         else:
             signals.append(f"Le quote favoriscono la trasferta: spread passato da {s_o} a {s_c}")
-            lambda_mod["a"] *= mod
-            lambda_mod["h"] *= (1 / mod)
+            lambda_mod["a"] *= mod_spread
+            lambda_mod["h"] *= (1 / mod_spread)
         level = "strong" if ad_s >= 1.0 else "weak"
 
     if has_total:
-        mod = 1.0 + clamp(ad_t * 0.06, 0.01, 0.07)
+        # 2a: log1p scaling for total modifier
+        mod_total = 1.0 + clamp(math.log1p(ad_t) * 0.075, 0.01, 0.08)
         if d_total > 0:
             signals.append(f"Atteso più gol: total salito da {t_o} a {t_c}")
-            lambda_mod["h"] *= mod
-            lambda_mod["a"] *= mod
+            lambda_mod["h"] *= mod_total
+            lambda_mod["a"] *= mod_total
         else:
             signals.append(f"Atteso meno gol: total sceso da {t_o} a {t_c}")
-            lambda_mod["h"] /= mod
-            lambda_mod["a"] /= mod
+            lambda_mod["h"] /= mod_total
+            lambda_mod["a"] /= mod_total
         if not has_spread and level == "none":
             level = "weak"
         if ad_t >= 0.5 and level == "weak" and not is_reverse and not is_reverse_a:
@@ -426,10 +429,13 @@ def analyze_steam(s_o: float, s_c: float, t_o: float, t_c: float) -> dict:
     if has_spread and has_total and level == "strong":
         if d_spread < 0 and d_total > 0:
             signals.append("🔥 CONSENSO: Casa favorita + più gol attesi")
-            lambda_mod["h"] *= 1.03
+            # 2b: proportional boost based on signal intensity (max +4% vs fixed +3%)
+            consensus_boost = 1.0 + clamp((ad_s + ad_t) * 0.008, 0.01, 0.04)
+            lambda_mod["h"] *= consensus_boost
         elif d_spread > 0 and d_total > 0:
             signals.append("🔥 CONSENSO: Trasf favorita + più gol attesi")
-            lambda_mod["a"] *= 1.03
+            consensus_boost = 1.0 + clamp((ad_s + ad_t) * 0.008, 0.01, 0.04)
+            lambda_mod["a"] *= consensus_boost
 
     return {
         "level": level,
@@ -439,7 +445,159 @@ def analyze_steam(s_o: float, s_c: float, t_o: float, t_c: float) -> dict:
         "dTotal": d_total,
         "adS": ad_s,
         "adT": ad_t,
+        "hasSpreadStrong": has_spread_strong,  # 4c: new field
     }
+
+
+def build_steam_advice(
+    steam_result: dict,
+    t_c: float,
+    s_c: float,
+) -> list[dict]:
+    """
+    Generate pre-match betting advice from steam movement data.
+
+    Uses Asian Handicap opening/closing + Total opening/closing to produce
+    structured pre-match tips. Each tip has:
+      - market: str  (e.g. "AH Casa -0.5", "Over 2.5", "1")
+      - reason: str  (brief Italian-language rationale)
+      - strength: "forte" | "medio" | "debole"
+      - confidence_req: float  (minimum confidence needed to act, 0–1)
+
+    Returns a list of advice dicts (may be empty if no signal).
+    """
+    advice: list[dict] = []
+    level = steam_result.get("level", "none")
+    d_spread = steam_result.get("dSpread", 0.0)
+    d_total = steam_result.get("dTotal", 0.0)
+    ad_s = steam_result.get("adS", 0.0)
+    ad_t = steam_result.get("adT", 0.0)
+    lambda_mod = steam_result.get("lambdaMod", {"h": 1.0, "a": 1.0})
+    has_spread_strong = steam_result.get("hasSpreadStrong", False)
+
+    # ── 1X2 / AH basato su spread ─────────────────────────
+    if ad_s >= 0.5:
+        strength = "forte" if ad_s >= 1.0 else "medio"
+        if d_spread < 0:
+            if ad_s >= 1.0:
+                advice.append({
+                    "market": "AH Casa -0.5",
+                    "reason": f"Spread mosso fortemente verso la casa (Δ={d_spread:+.2f}). Il mercato prezza la Casa come nettamente favorita.",
+                    "strength": strength,
+                    "confidence_req": 0.45,
+                })
+            else:
+                advice.append({
+                    "market": "1 (Vittoria Casa)",
+                    "reason": f"Spread in movimento verso la casa (Δ={d_spread:+.2f}). Segnale d'acqua sulla Casa.",
+                    "strength": strength,
+                    "confidence_req": 0.40,
+                })
+        else:
+            if ad_s >= 1.0:
+                advice.append({
+                    "market": "AH Trasferta -0.5",
+                    "reason": f"Spread mosso fortemente verso la trasferta (Δ={d_spread:+.2f}). Il mercato prezza la Trasferta come nettamente favorita.",
+                    "strength": strength,
+                    "confidence_req": 0.45,
+                })
+            else:
+                advice.append({
+                    "market": "2 (Vittoria Trasferta)",
+                    "reason": f"Spread in movimento verso la trasferta (Δ={d_spread:+.2f}). Segnale d'acqua sulla Trasferta.",
+                    "strength": strength,
+                    "confidence_req": 0.40,
+                })
+
+    # ── Over/Under basato su total ────────────────────────
+    if ad_t >= 0.25:
+        total_line = round(t_c * 2) / 2  # round to nearest half-point
+        strength_t = "forte" if ad_t >= 0.5 else "debole"
+        if d_total > 0:
+            advice.append({
+                "market": f"Over {total_line}",
+                "reason": f"Total salito di {d_total:+.2f}. Il mercato si aspetta più gol — Over {total_line} premiato.",
+                "strength": strength_t,
+                "confidence_req": 0.35,
+            })
+        else:
+            advice.append({
+                "market": f"Under {total_line}",
+                "reason": f"Total sceso di {d_total:+.2f}. Il mercato si aspetta meno gol — Under {total_line} premiato.",
+                "strength": strength_t,
+                "confidence_req": 0.35,
+            })
+
+    # ── CONSENSO: spread + total concordi ─────────────────
+    if level == "strong" and ad_s >= 0.5 and ad_t >= 0.25:
+        if d_spread < 0 and d_total > 0:
+            advice.append({
+                "market": "Combo: Casa + Over",
+                "reason": "CONSENSO pieno: spread verso Casa e total in rialzo. Segnale doppio — possibile partita aperta con Casa favorita.",
+                "strength": "forte",
+                "confidence_req": 0.50,
+            })
+            if ad_s >= 1.0:
+                line = "AH Casa -0.75 / -1.0" if has_spread_strong else "AH Casa -0.25 / -0.5"
+                advice.append({
+                    "market": line,
+                    "reason": f"Spread forte (Δ={d_spread:+.2f}) + total in crescita. Asian Handicap Casa con margine.",
+                    "strength": "forte",
+                    "confidence_req": 0.50,
+                })
+        elif d_spread > 0 and d_total > 0:
+            advice.append({
+                "market": "Combo: Trasferta + Over",
+                "reason": "CONSENSO pieno: spread verso Trasferta e total in rialzo. Partita aperta con Trasferta favorita.",
+                "strength": "forte",
+                "confidence_req": 0.50,
+            })
+            if ad_s >= 1.0:
+                line = "AH Trasferta -0.75 / -1.0" if has_spread_strong else "AH Trasferta -0.25 / -0.5"
+                advice.append({
+                    "market": line,
+                    "reason": f"Spread forte (Δ={d_spread:+.2f}) + total in crescita. Asian Handicap Trasferta con margine.",
+                    "strength": "forte",
+                    "confidence_req": 0.50,
+                })
+
+    # ── STEAM INVERSO: segnale contrario, attenzione ──────
+    if level == "reverse":
+        if d_spread < 0 and d_total < 0:
+            advice.append({
+                "market": "⚠️ ATTENZIONE: Casa favorita ma total scende",
+                "reason": "Steam inverso: il mercato prezza la Casa ma si aspetta meno gol. Possibile strategia difensiva. Valutare Under.",
+                "strength": "debole",
+                "confidence_req": 0.55,
+            })
+        elif d_spread > 0 and d_total < 0:
+            advice.append({
+                "market": "⚠️ ATTENZIONE: Trasferta favorita ma total scende",
+                "reason": "Steam inverso: il mercato prezza la Trasferta ma si aspetta meno gol. Possibile strategia difensiva. Valutare Under.",
+                "strength": "debole",
+                "confidence_req": 0.55,
+            })
+
+    # ── BTTS basato su asimmetria lambda ──────────────────
+    lh = lambda_mod.get("h", 1.0)
+    la = lambda_mod.get("a", 1.0)
+    if lh > 1.02 and la > 1.02 and d_total > 0.25:
+        advice.append({
+            "market": "BTTS Sì",
+            "reason": f"Entrambe le squadre con lambda in aumento (Casa ×{lh:.2f}, Trasf ×{la:.2f}) e total in rialzo. BTTS probabile.",
+            "strength": "medio" if d_total >= 0.5 else "debole",
+            "confidence_req": 0.40,
+        })
+    elif abs(lh - la) > 0.10 and d_total < -0.25:
+        stronger = "Casa" if lh > la else "Trasferta"
+        advice.append({
+            "market": f"BTTS No (Clean sheet {stronger})",
+            "reason": f"Total in calo e lambda asimmetrico. La {stronger} potrebbe mantenere la porta inviolata.",
+            "strength": "debole",
+            "confidence_req": 0.45,
+        })
+
+    return advice
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -565,11 +723,15 @@ def scan(payload: dict) -> dict:
     s_c_capped = clamp(s_c, -1.75, 1.75)
     prior_h = max(0.15, (t_c_adj - s_c_capped) / 2) / 90
     prior_a = max(0.15, (t_c_adj + s_c_capped) / 2) / 90
-    # Ensure prior_h + prior_a is consistent with t_c_adj/90 (soft re-normalization)
+    # 2c: Apply floor BEFORE normalisation so that prior_h + prior_a = t_c_adj/90
+    # is preserved after re-normalisation (applying floor only after breaks the sum).
+    prior_h = max(prior_h, 0.15 / 90)
+    prior_a = max(prior_a, 0.15 / 90)
     prior_sum = prior_h + prior_a
     if prior_sum > 0:
         prior_h = prior_h / prior_sum * (t_c_adj / 90)
         prior_a = prior_a / prior_sum * (t_c_adj / 90)
+    # Second floor as final guard
     prior_h = max(prior_h, 0.15 / 90)
     prior_a = max(prior_a, 0.15 / 90)
 
@@ -667,11 +829,14 @@ def scan(payload: dict) -> dict:
         alerts.append({"type": "tactical", "msg": "🔥 La trasferta mantiene un buon ritmo offensivo — continua a creare occasioni"})
 
     # ── Lambda pre-match ──────────────────────────────────────────
-    h_xg_pre = max(0.15, (t_c_adj - s_c_capped) / 2) * steam["lambdaMod"]["h"]
-    a_xg_pre = max(0.15, (t_c_adj + s_c_capped) / 2) * steam["lambdaMod"]["a"]
+    # 2e: finite_or guard prevents NaN/Inf from propagating when lambdaMod is extreme
+    h_xg_pre = finite_or(max(0.15, (t_c_adj - s_c_capped) / 2) * steam["lambdaMod"]["h"], 0.15)
+    a_xg_pre = finite_or(max(0.15, (t_c_adj + s_c_capped) / 2) * steam["lambdaMod"]["a"], 0.15)
 
     # M8: bilinear blend — threshold raised from 0.15 to 0.40.
     # sw_scale transitions from data-driven to sigmoid only once sample_w ≥ 0.40.
+    # When sample_w == 0 (no live data), sw_scale == 0 → w = sample_w * 1.0 = 0
+    # → lambda = h_xg_pre (pure prior blend, correct behaviour)
     sw_scale_h = clamp(sample_w_h / 0.40, 0.0, 1.0)
     sw_scale_a = clamp(sample_w_a / 0.40, 0.0, 1.0)
     sig_h = sigmoid_weight(minute)
@@ -1231,6 +1396,7 @@ def scan(payload: dict) -> dict:
             "dSpread": round(steam["dSpread"], 2),
             "dTotal": round(steam["dTotal"], 2),
             "signals": steam["signals"],
+            "advice": build_steam_advice(steam, t_c, s_c),  # 3b: pre-match advice
         },
         "vixDetail": {
             "H": str(round(vix_h)),
