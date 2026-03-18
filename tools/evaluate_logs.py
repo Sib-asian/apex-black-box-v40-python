@@ -77,14 +77,18 @@ def _rps_1x2(p1: float, px: float, p2: float,
 
 
 def _log_score_binary(p: float, y: float, eps: float = 1e-9) -> float:
-    """M16: Log score for a binary outcome — higher is better (0 = perfect)."""
+    """M16: Log score for a binary outcome — 0 is the maximum (perfect prediction);
+    more negative values indicate worse predictions.
+    """
     p_clipped = max(eps, min(1.0 - eps, p))
     return y * math.log(p_clipped) + (1.0 - y) * math.log(1.0 - p_clipped)
 
 
 def _log_score_1x2(p1: float, px: float, p2: float,
                    y1: float, yx: float, y2: float, eps: float = 1e-9) -> float:
-    """M16: Log score for 1X2 (mean log-probability of true outcome)."""
+    """M16: Log score for 1X2 — 0 is the maximum (perfect prediction);
+    more negative values indicate worse predictions.
+    """
     probs = [max(eps, p1), max(eps, px), max(eps, p2)]
     labels = [y1, yx, y2]
     return sum(labels[i] * math.log(probs[i]) for i in range(3))

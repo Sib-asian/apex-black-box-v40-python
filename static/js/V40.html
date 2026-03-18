@@ -2361,6 +2361,35 @@ function renderMiniChart(history) {
         html+=`<span class="chart-val">${(last*100).toFixed(0)}%</span></div>`;
     }
     html+='</div>';
+    // #10: xgRate momentum chart
+    html+=renderXgRateMomentum(scans);
+    return html;
+}
+
+// #10: xgRate momentum chart — shows live xG rate trend for both teams
+function renderXgRateMomentum(scans) {
+    if (!scans||scans.length<2) return '';
+    const ratesH=scans.map(s=>parseFloat(s.data?.raw?.xgRateH||0)*90);
+    const ratesA=scans.map(s=>parseFloat(s.data?.raw?.xgRateA||0)*90);
+    const mins=scans.map(s=>s.data?.min||0);
+    const maxR=Math.max(...ratesH,...ratesA,0.01);
+    if (maxR<0.01) return '';
+    let html='<div class="mini-chart"><div class="mini-chart-title">⚡ Momentum xG Rate (/90\')</div>';
+    html+=`<div class="chart-row"><span class="chart-lbl" style="color:var(--matrix-green)">Casa</span>`;
+    ratesH.forEach((v,i)=>{
+        const w=clamp(v/maxR*100,2,100);
+        const isLast=i===ratesH.length-1;
+        html+=`<div class="chart-bar" title="Min${mins[i]}: ${v.toFixed(2)}/90'"><div class="chart-fill" style="width:${w}%;background:var(--matrix-green);opacity:${isLast?1:0.45+0.55*(i/(ratesH.length-1))}"></div></div>`;
+    });
+    html+=`<span class="chart-val">${ratesH[ratesH.length-1].toFixed(2)}</span></div>`;
+    html+=`<div class="chart-row"><span class="chart-lbl" style="color:var(--ferrari-red)">Trasferta</span>`;
+    ratesA.forEach((v,i)=>{
+        const w=clamp(v/maxR*100,2,100);
+        const isLast=i===ratesA.length-1;
+        html+=`<div class="chart-bar" title="Min${mins[i]}: ${v.toFixed(2)}/90'"><div class="chart-fill" style="width:${w}%;background:var(--ferrari-red);opacity:${isLast?1:0.45+0.55*(i/(ratesA.length-1))}"></div></div>`;
+    });
+    html+=`<span class="chart-val">${ratesA[ratesA.length-1].toFixed(2)}</span></div>`;
+    html+='</div>';
     return html;
 }
 
@@ -2511,7 +2540,15 @@ function renderHistory(n) {
         const d=h.data;
         let alertsHTML='';
         // [V36] Guard: d.alerts potrebbe essere undefined su scan da versioni vecchie
-        (d.alerts||[]).forEach(a=>alertsHTML+=`<span class="t-alert ${a.type||'info'}">${a.msg||''}</span>`);
+        // #11: Alert deduplication — deduplicate by message to avoid visual clutter
+        const _seenAlerts=new Set();
+        (d.alerts||[]).forEach(a=>{
+            const _key=(a.type||'info')+'::'+(a.msg||'');
+            if(!_seenAlerts.has(_key)){
+                _seenAlerts.add(_key);
+                alertsHTML+=`<span class="t-alert ${a.type||'info'}">${a.msg||''}</span>`;
+            }
+        });
 
         let steamHTML='';
         if (d.steam?.level!=='none') {
@@ -2530,26 +2567,52 @@ function renderHistory(n) {
             const hgN=d.currentHg??0, agN=d.currentAg??0;
             const sorted=[...d.matrix].sort((a,b)=>b.p-a.p).slice(0,6);
             const maxP=sorted[0]?.p||0.01;
-            const cells=sorted.map(c=>{
-                const cls=c.p>maxP*0.75?'hot':(c.p>maxP*0.45?'warm':'');
-                const col=cls==='hot'?'var(--chaos-orange)':cls==='warm'?'var(--gold)':'#666';
-                return `<div class="matrix-cell ${cls}"><span class="sc">${hgN+c.h}-${agN+c.a}</span><span class="pct" style="color:${col}">${(c.p*100).toFixed(1)}%</span></div>`;
+            // Top-6 bar chart (existing)
+            const barList=sorted.map((r,i)=>{
+                const sc=hgN+r.h+'-'+(agN+r.a);
+                const pct=(r.p*100).toFixed(1);
+                const col=i===0?'var(--chaos-orange)':i===1?'var(--gold)':'#555';
+                const w=Math.round(r.p/maxP*100);
+                return `<div style="display:flex;align-items:center;gap:8px">
+                    <span style="min-width:32px;color:${col};font-weight:${i<2?'bold':'normal'};font-size:0.72em">${sc}</span>
+                    <div style="flex:1;height:3px;background:#111"><div style="width:${w}%;height:100%;background:${col}"></div></div>
+                    <span style="min-width:28px;text-align:right;color:${col};font-size:0.68em">${pct}%</span>
+                </div>`;
             }).join('');
+            // #9: Heatmap matrix — full probability grid (rows=home goals, cols=away goals)
+            const maxGoalsH=Math.max(...d.matrix.map(c=>c.h),4);
+            const maxGoalsA=Math.max(...d.matrix.map(c=>c.a),4);
+            const cellMap={};
+            d.matrix.forEach(c=>{cellMap[`${c.h}_${c.a}`]=c.p;});
+            const allP=d.matrix.map(c=>c.p);
+            const maxPAll=Math.max(...allP,0.001);
+            let heatCols='<div style="display:grid;grid-template-columns:18px '+Array.from({length:maxGoalsA+1},()=>'1fr').join(' ')+';gap:1px;margin-top:6px;font-size:0.55em;">';
+            heatCols+=`<div></div>`;
+            for(let a=0;a<=maxGoalsA;a++) heatCols+=`<div style="text-align:center;color:#444">${agN+a}</div>`;
+            for(let h=0;h<=maxGoalsH;h++){
+                heatCols+=`<div style="color:#444;text-align:right;line-height:18px;padding-right:3px">${hgN+h}</div>`;
+                for(let a=0;a<=maxGoalsA;a++){
+                    const p=cellMap[`${h}_${a}`]||0;
+                    const intensity=p/maxPAll;
+                    const alpha=Math.round(clamp(intensity*0.9+0.05,0.05,0.95)*255).toString(16).padStart(2,'0');
+                    const bg=intensity>0.6?`#ff4500${alpha}`:intensity>0.3?`#ffb700${alpha}`:`#00aa55${alpha}`;
+                    const pct=(p*100).toFixed(1);
+                    const textCol=intensity>0.5?'#fff':'#888';
+                    heatCols+=`<div style="background:${bg};text-align:center;padding:2px 0;border-radius:1px;line-height:14px;color:${textCol}" title="${hgN+h}-${agN+a}: ${pct}%">${pct}%</div>`;
+                }
+            }
+            heatCols+='</div>';
+            const heatHeaderH=`<div style="font-size:0.52em;color:#333;margin-top:3px">↑ Casa · Trasferta →</div>`;
             matrixHTML=`<div class="matrix-wrap">
                 <div class="matrix-title">📊 Risultati più probabili</div>
                 <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
-                ${sorted.map((r,i)=>{
-                    const sc=hgN+r.h+'-'+(agN+r.a);
-                    const pct=(r.p*100).toFixed(1);
-                    const col=i===0?'var(--chaos-orange)':i===1?'var(--gold)':'#555';
-                    const w=Math.round(r.p/maxP*100);
-                    return `<div style="display:flex;align-items:center;gap:8px">
-                        <span style="min-width:32px;color:${col};font-weight:${i<2?'bold':'normal'};font-size:0.72em">${sc}</span>
-                        <div style="flex:1;height:3px;background:#111"><div style="width:${w}%;height:100%;background:${col}"></div></div>
-                        <span style="min-width:28px;text-align:right;color:${col};font-size:0.68em">${pct}%</span>
-                    </div>`;
-                }).join('')}
-                </div></div>`;
+                ${barList}
+                </div>
+                <div style="margin-top:8px;border-top:1px dotted #222;padding-top:6px">
+                    <div style="font-size:0.55em;color:var(--alert-purple);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px">🔥 Heatmap Matrice</div>
+                    ${heatCols}${heatHeaderH}
+                </div>
+                </div>`;
         }
 
         let htHTML='';

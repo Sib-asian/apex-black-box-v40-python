@@ -837,6 +837,16 @@ class TestIsotonicCalibrator:
             out = cal.predict(p)
             assert 0.0 < out < 1.0, f"predict({p})={out} outside (0,1)"
 
+    def test_predict_invalid_input_raises(self):
+        from apex_black_box.calibration import IsotonicCalibrator
+        import pytest as _pytest
+        cal = IsotonicCalibrator()
+        cal.fit([0.2, 0.5, 0.8], [0, 1, 1])
+        with _pytest.raises(ValueError):
+            cal.predict(-0.1)
+        with _pytest.raises(ValueError):
+            cal.predict(1.5)
+
     def test_monotone_over_range(self):
         from apex_black_box.calibration import IsotonicCalibrator
         import random as rng
@@ -895,7 +905,7 @@ class TestNBPMF:
         assert nb_pmf(0.0, 0, alpha=0.5) == 1.0
         assert nb_pmf(0.0, 3, alpha=0.5) == 0.0
 
-    def test_nb_alpha_increases_variance(self):
+    def test_nb_alpha_introduces_overdispersion(self):
         """Higher alpha introduces overdispersion — NB has higher variance than Poisson.
 
         Overdispersion means more mass at 0 AND at large k values simultaneously.

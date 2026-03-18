@@ -124,11 +124,23 @@ class IsotonicCalibrator:
 
         Uses piecewise-linear interpolation between fitted breakpoints.
         Falls back to the raw probability if not yet fitted.
-        """
-        if not self._fitted or len(self._xs) == 0:
-            return float(p)
 
+        Parameters
+        ----------
+        p : float
+            Raw predicted probability; must be in [0, 1].
+
+        Raises
+        ------
+        ValueError
+            If *p* is outside [0, 1].
+        """
         p = float(p)
+        if not (0.0 <= p <= 1.0):
+            raise ValueError(f"Probability must be in range [0, 1], got {p}")
+
+        if not self._fitted or len(self._xs) == 0:
+            return p
 
         if p <= self._xs[0]:
             val = self._ys[0]
