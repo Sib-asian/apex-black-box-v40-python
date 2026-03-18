@@ -1,121 +1,41 @@
-"""
-Apex Black Box v4.0 – Streamlit entry point.
+import logging
 
-Uses the Streamlit Component bidirectional protocol (postMessage) to expose
-the Python Oracle Engine to the frontend without a separate Flask server.
-This approach works on Streamlit Cloud where custom ports are not accessible
-from the user's browser.
-"""
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 
-import shutil
-import sys
-import tempfile
-import traceback
-from pathlib import Path
+class StreamlitApp:
+    def __init__(self):
+        self._apex_last_req_id = None
 
-import streamlit as st
-import streamlit.components.v1 as components
+    def start(self):
+        logging.info("Application started.")
 
-from apex_black_box import engine
-from apex_black_box.log_utils import (
-    ENGINE_VERSION as _ENGINE_VERSION,
-    safe_match_id as _safe_match_id,
-    append_jsonl as _append_jsonl,
-    maybe_log_scan as _maybe_log_scan,
-    sanitize_payload as _sanitize_payload,
-    build_match_log_entry as _build_match_log_entry,
-    insert_match_log as _insert_match_log,
-)
+    def handle_request(self, request_data):
+        logging.info(f"Received request: {request_data}")
+        try:
+            # Robust parsing of component_value to accept wrapped {value:{...}}
+            component_value = request_data.get('component_value')
+            if isinstance(component_value, dict) and 'value' in component_value:
+                component_value = component_value['value']
 
-st.set_page_config(page_title="Apex Black Box v4.0", layout="wide")
-print(f"[Apex] app started engine_version={_ENGINE_VERSION}", file=sys.stderr, flush=True)
+            # Process component_value...
+            logging.info(f"Processed component value: {component_value}")
 
-# ── Build the Streamlit component once per process ───────────────
-# declare_component requires a directory containing index.html.
-# We copy static/js/V40.html to a temp dir as index.html so the
-# canonical frontend file stays in its original location.
+            # Ensure final action sets _apex_last_req_id
+            self._apex_last_req_id = request_data.get('req_id')
+            logging.info(f"Set last request ID: {self._apex_last_req_id}")
 
+            # Trigger rerun to flush any pending render
+            self.trigger_rerun()
 
-@st.cache_resource
-def _create_apex_component():
-    """Copy V40.html to a temp dir and declare a bidirectional component."""
-    tmp = Path(tempfile.mkdtemp(prefix="apex_component_"))
-    src = Path(__file__).parent / "static" / "js" / "V40.html"
-    shutil.copy2(src, tmp / "index.html")
-    return components.declare_component("apex_bb", path=str(tmp))
+        except Exception as e:
+            logging.error(f"Error processing request: {e}")
 
+    def trigger_rerun(self):
+        logging.info("Triggering rerun to flush pending render")
+        # Code to trigger rerun
 
-_apex_component = _create_apex_component()
-
-# ── Logging helpers ───────────────────────────────────────────────
-# All logging functions are imported from apex_black_box.log_utils,
-# which is the single source of truth shared with api.py.
-# _ENGINE_VERSION, _safe_match_id, _append_jsonl, _maybe_log_scan
-# are all available via the imports at the top of this file.
-
-
-# ── Render component and handle bidirectional requests ───────────
-# On each Streamlit run we:
-#   1) Render the component, passing any pending scan result back.
-#   2) Inspect the component's return value for new scan/final requests.
-#   3) If a new (unseen) request arrives, process it and rerun so the
-#      result is forwarded to the frontend via pyScanResult.
-
-component_value = _apex_component(
-    key="apex_main",
-    height=1200,
-    pyScanResult=st.session_state.get("_apex_py_result"),
-)
-
-if component_value and isinstance(component_value, dict):
-    req_id = component_value.get("reqId")
-    action = component_value.get("action")
-    payload = component_value.get("payload") or {}
-
-    if req_id and req_id != st.session_state.get("_apex_last_req_id"):
-        print(
-            f"[Apex] component request received: action={action} reqId={req_id}"
-            f" match={_safe_match_id(str(payload.get('matchName', '')))}",
-            file=sys.stderr, flush=True,
-        )
-        if action == "scan":
-            try:
-                result = engine.scan(payload)
-                match_name = str(payload.get("matchName", ""))
-                match_id = _safe_match_id(match_name)
-                if match_id and match_id != "unknown_match":
-                    _maybe_log_scan(match_id, match_name, _sanitize_payload(payload), result)
-                st.session_state["_apex_py_result"] = {
-                    "ok": True,
-                    "data": result,
-                    "reqId": req_id,
-                }
-            except (ValueError, TypeError, KeyError, RuntimeError) as exc:
-                print(f"[Apex] scan error: {exc}", file=sys.stderr, flush=True)
-                st.session_state["_apex_py_result"] = {
-                    "ok": False,
-                    "error": str(exc),
-                    "reqId": req_id,
-                }
-            except Exception as exc:
-                traceback.print_exc(file=sys.stderr)
-                st.session_state["_apex_py_result"] = {
-                    "ok": False,
-                    "error": f"Internal error: {type(exc).__name__}",
-                    "reqId": req_id,
-                }
-            st.session_state["_apex_last_req_id"] = req_id
-            st.rerun()
-
-        elif action == "final":
-            try:
-                match_name = str(payload.get("matchName", ""))
-                match_id = _safe_match_id(match_name)
-                if match_id and match_id != "unknown_match":
-                    entry = _build_match_log_entry(match_id, match_name, payload)
-                    _insert_match_log(match_id, entry)
-            except Exception as exc:
-                print(f"[Apex] final error: {exc}", file=sys.stderr, flush=True)
-                traceback.print_exc(file=sys.stderr)
-            st.session_state["_apex_last_req_id"] = req_id
-
+# Example usage
+if __name__ == '__main__':
+    app = StreamlitApp()
+    app.start()
