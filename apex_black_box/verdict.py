@@ -132,6 +132,8 @@ def generate_verdict(
         {"id": "over", "name": f"Over {data.get('dynOver', 2.5)}",
                                                        "p": _safe(probs.get("O_Dyn"),0.0), "bkKey": "O_Dyn"},
         {"id": "btts", "name": "BTTS Sì",             "p": btts_,                         "bkKey": "BTTS"},
+        # Fix 11 (evolutivo): BTTS No / Clean Sheet — mercato liquido su exchange
+        {"id": "btts_no", "name": "BTTS No (Clean Sheet)", "p": clamp01(1.0 - btts_),     "bkKey": None},
     ]
 
     if over15_useful:
@@ -250,6 +252,19 @@ def generate_verdict(
                 score -= 4
             if hg == 0 and ag == 0 and vix_ > 45 and min_ > 20:
                 score += 2
+
+        # Fix 11 (evolutivo): BTTS No scoring rules
+        if m_id == "btts_no":
+            if hg > 0 and ag > 0:
+                remove = True
+                reason = "BTTS già avvenuto (entrambe hanno segnato)"
+            if min_ < 30 and (hg + ag) == 0 and vix_ < 35:
+                score += 2  # partita bloccata a inizio gara
+            # Squadra con rosso che non ha segnato → porta inviolata più probabile
+            if rc_h >= 1 and hg == 0:
+                score += 1
+            if rc_a >= 1 and ag == 0:
+                score += 1
 
         # Rule 5: Over 1.5
         if m_id == "over15":
@@ -500,7 +515,7 @@ def generate_verdict(
 
     # FIX 4: Diversify alt_pick — prefer a pick from a different market family than top_pick.
     # Market families to avoid correlated picks (goal/result/AH are largely independent).
-    _GOAL_FAMILY = {"over", "over15", "over35", "under25", "under35", "btts"}
+    _GOAL_FAMILY = {"over", "over15", "over35", "under25", "under35", "btts", "btts_no"}
     _RESULT_FAMILY = {"1", "X", "2", "dc1X", "dcX2"}
     _AH_FAMILY = {"nextH", "nextA", "nextH_chase"}
 
