@@ -1,8 +1,10 @@
-    if (suggestions.length) {
-        report += '\n💡 SUGGERIMENTI:\n';
-        suggestions.forEach(s => report += '  • ' + s + '\n');
-    } else {
-        report += '\n✅ Nessun bias significativo rilevato — buona calibrazione!\n';
-    }
-    const _affLabel = n>=20 ? 'SOLIDA ('+n+' partite)' : n>=10 ? 'INDICATIVA (accumula ancora)' : 'INSUFFICIENTE (min 10)';
-    report += '\nAffidabilita: ' + _affLabel + '\n';
+if (suggestions.length) {
+    report += '\n💡 SUGGERIMENTI:\n';
+    suggestions.forEach(s => report += '  • ' + s + '\n');
+} else {
+    report += '\n✅ Nessun bias significativo rilevato — buona calibrazione!\n';
+}
+const _affLabel = n>=20 ? 'SOLIDA ('+n+' partite)' : n>=10 ? 'INDICATIVA (accumula ancora)' : 'INSUFFICIENTE (min 10)';
+report += '\nAffidabilita: ' + _affLabel + '\n';
+
+//... the rest of the file's content from commit 9a271b563097ea576f21dbd9f9a4ce23ceeb054d
