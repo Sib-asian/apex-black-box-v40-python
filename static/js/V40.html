@@ -1,10 +1,23 @@
-if (suggestions.length) {
-    report += '\n💡 SUGGERIMENTI:\n';
-    suggestions.forEach(s => report += '  • ' + s + '\n');
-} else {
-    report += '\n✅ Nessun bias significativo rilevato — buona calibrazione!\n';
-}
-const _affLabel = n>=20 ? 'SOLIDA ('+n+' partite)' : n>=10 ? 'INDICATIVA (accumula ancora)' : 'INSUFFICIENTE (min 10)';
-report += '\nAffidabilita: ' + _affLabel + '\n';
-
-//... the rest of the file's content from commit 9a271b563097ea576f21dbd9f9a4ce23ceeb054d
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V40 Streamlit App</title>
+    <script>
+        window.addEventListener('message', function(event) {
+            // Handle messages from the Streamlit backend
+            console.log('Received message:', event.data);
+        });
+    </script>
+</head>
+<body>
+    <h1>Welcome to the V40 Streamlit App</h1>
+    <script>
+        // Insert your JavaScript code here for functionality
+        const nativePostMessageBridge = (data) => {
+            window.parent.postMessage(data, '*');
+        };
+    </script>
+</body>
+</html>
