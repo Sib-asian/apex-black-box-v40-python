@@ -26,6 +26,7 @@ from apex_black_box.log_utils import (
     safe_match_id as _safe_match_id,
     append_jsonl as _append_jsonl,
     maybe_log_scan as _log_utils_maybe_log_scan,
+    sanitize_payload as _sanitize_payload,
 )
 
 app = Flask(__name__)
@@ -35,33 +36,7 @@ CORS(app)  # allow same-machine requests from the Streamlit iframe
 # Logging helpers (_safe_match_id, _append_jsonl, SNAP_MINUTES, SNAP_TAGS, etc.)
 # are imported from apex_black_box.log_utils — single source of truth shared with
 # streamlit_app.py.
-
-
-# ── FIX 11: Payload sanitization ─────────────────────────────────
-# Whitelist of fields to include in the logged payload.
-_PAYLOAD_WHITELIST = frozenset([
-    "min", "rec", "hg", "ag", "lastGoal",
-    "sotH", "misH", "corH", "daH",
-    "sotA", "misA", "corA", "daA",
-    "rcH", "rcA", "tC", "tO", "sC", "sO",
-    "isKnockout", "possH", "possA",
-])
-_MAX_STRING_LENGTH = 200  # max characters for any string field in sanitized payload
-
-
-def _sanitize_payload(payload: dict) -> dict:
-    """Return a sanitized copy of payload with only whitelisted fields.
-
-    Truncates string values to _MAX_STRING_LENGTH chars and omits large fields like prevScans.
-    """
-    result: dict = {}
-    for key in _PAYLOAD_WHITELIST:
-        if key in payload:
-            val = payload[key]
-            if isinstance(val, str):
-                val = val[:_MAX_STRING_LENGTH]
-            result[key] = val
-    return result
+# sanitize_payload and PAYLOAD_WHITELIST are also imported from log_utils.
 
 
 # ── FIX 9: Per-match rate limiting ───────────────────────────────

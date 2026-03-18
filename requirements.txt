@@ -2,3 +2,4 @@ Flask>=2.3,<4
 Flask-CORS>=4.0
 plotly>=5.0
 streamlit>=1.28
+supabase>=2.0.0
