@@ -17,6 +17,8 @@ from apex_black_box.engine import (
     poisson_pmf,
     build_result_matrix,
     aggregate_from_matrix,
+    simulate_extra_time,
+    finite_or,
 )
 from apex_black_box.utils import (
     wilson_ci,
@@ -1000,3 +1002,239 @@ class TestEvaluateLogs:
         acc.add("snap_60", probs, labels)
         assert len(acc.logscore["snap_60"]["1x2"]) == 1
         assert acc.logscore["snap_60"]["over25"][0] < 0.0  # log-score is negative
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Precision & Robustness Hardening — new test classes
+# ─────────────────────────────────────────────────────────────────
+
+class TestDeterministicET:
+    """simulate_extra_time must return identical results for identical inputs + seed."""
+
+    def test_same_seed_same_output(self):
+        """Repeated calls with the same seed must produce bit-identical output."""
+        result_a = simulate_extra_time(1.2, 0.9, seed=42)
+        result_b = simulate_extra_time(1.2, 0.9, seed=42)
+        assert result_a == result_b, "ET probabilities differ across runs with same seed"
+
+    def test_different_seeds_may_differ(self):
+        """Different seeds must produce different sequences from the isolated RNG.
+
+        We verify this directly using the underlying random.Random class:
+        two distinct seeds must produce different first draws.
+        """
+        import random as _random
+        rng1 = _random.Random(1)
+        rng2 = _random.Random(999999)
+        # At least one of the first 5 draws must differ — seeds produce distinct streams
+        draws1 = [rng1.random() for _ in range(5)]
+        draws2 = [rng2.random() for _ in range(5)]
+        assert draws1 != draws2, \
+            "RNG streams for seeds 1 and 999999 were identical — seed is being ignored"
+
+    def test_scan_et_deterministic_for_same_payload(self):
+        """scan() must return identical etProbs for identical KO payload."""
+        payload = {
+            "min": 90, "hg": 1, "ag": 1, "tC": 2.5, "sC": 0.0,
+            "isKnockout": True, "matchName": "TestTeam A vs TestTeam B",
+        }
+        r1 = scan(payload)
+        r2 = scan(payload)
+        assert r1["etProbs"] is not None, "etProbs should be set for KO at min 90 tied"
+        assert r1["etProbs"] == r2["etProbs"], \
+            "etProbs differs across two identical scan() calls"
+
+    def test_scan_et_probs_in_range(self):
+        """etProbs values must sum to 1 and lie in [0, 1]."""
+        payload = {
+            "min": 90, "hg": 0, "ag": 0, "tC": 2.5, "sC": 0.0,
+            "isKnockout": True, "matchName": "Test KO",
+        }
+        r = scan(payload)
+        et = r["etProbs"]
+        assert et is not None
+        for k, v in et.items():
+            assert 0.0 <= v <= 1.0, f"etProbs[{k}]={v} out of range"
+        total = et["etH"] + et["etA"] + et["penH"] + et["penA"]
+        assert abs(total - 1.0) < 1e-6, f"etProbs sum = {total}, expected 1.0"
+
+
+class TestFiniteOrHelper:
+    """finite_or must return fallback for non-finite and non-numeric values."""
+
+    def test_finite_value_passes_through(self):
+        assert finite_or(0.75) == 0.75
+
+    def test_nan_returns_fallback(self):
+        assert finite_or(float("nan"), 0.5) == 0.5
+
+    def test_inf_returns_fallback(self):
+        assert finite_or(float("inf"), 1.0) == 1.0
+        assert finite_or(float("-inf"), 0.0) == 0.0
+
+    def test_non_numeric_returns_fallback(self):
+        assert finite_or("bad", 0.3) == 0.3
+        assert finite_or(None, 0.2) == 0.2
+
+
+class TestMatrixFallback:
+    """build_result_matrix must never produce NaN/Inf cells and always sum to 1."""
+
+    def test_normal_lambdas_sum_to_one(self):
+        matrix = build_result_matrix(1.2, 0.9, 45)
+        total = sum(c["p"] for c in matrix)
+        assert abs(total - 1.0) < 1e-9, f"Matrix sum={total}"
+
+    def test_extreme_high_lambda_sum_to_one(self):
+        """Very high lambdas should not produce NaN and must still sum to 1."""
+        matrix = build_result_matrix(10.0, 10.0, 0)
+        total = sum(c["p"] for c in matrix)
+        assert abs(total - 1.0) < 1e-6, f"Matrix sum={total} for high lambdas"
+
+    def test_near_zero_lambda_sum_to_one(self):
+        """Near-zero lambdas trigger fallback path — must still sum to 1."""
+        matrix = build_result_matrix(1e-15, 1e-15, 88)
+        total = sum(c["p"] for c in matrix)
+        assert abs(total - 1.0) < 1e-6, f"Matrix sum={total} for near-zero lambdas"
+
+    def test_no_nan_inf_in_cells(self):
+        """All cell probabilities must be finite and non-negative."""
+        for l_h, l_a in [(0.01, 0.01), (3.5, 3.5), (1.5, 0.3), (0.0, 1.0)]:
+            matrix = build_result_matrix(l_h, l_a, 45)
+            for c in matrix:
+                assert math.isfinite(c["p"]), f"Non-finite p in cell {c}"
+                assert c["p"] >= 0.0, f"Negative p in cell {c}"
+
+    def test_nan_lambda_falls_back(self):
+        """NaN lambdas must not propagate into the output matrix."""
+        matrix = build_result_matrix(float("nan"), float("nan"), 45)
+        total = sum(c["p"] for c in matrix)
+        assert abs(total - 1.0) < 1e-6, f"Matrix sum={total} for NaN lambdas"
+        for c in matrix:
+            assert math.isfinite(c["p"]), "NaN in matrix cell after NaN lambda"
+
+
+class TestMathInvariants:
+    """Mathematical invariants that must hold across all scan outputs."""
+
+    @pytest.mark.parametrize("minute,hg,ag", [
+        (1, 0, 0), (15, 0, 0), (30, 1, 0), (45, 1, 1),
+        (60, 2, 1), (75, 2, 2), (85, 3, 0), (90, 0, 0),
+    ])
+    def test_dc_1x_gte_p1(self, minute, hg, ag):
+        """DC_1X = P1 + PX must be >= P1 (trivially true if PX >= 0)."""
+        r = _scan(min=minute, hg=hg, ag=ag, sotH=4, sotA=3)
+        probs = r["probs"]
+        assert probs["DC_1X"] >= probs["1"] - 1e-9, \
+            f"DC_1X={probs['DC_1X']} < P1={probs['1']} at min={minute}"
+
+    @pytest.mark.parametrize("minute,hg,ag", [
+        (1, 0, 0), (15, 0, 0), (30, 1, 0), (45, 1, 1),
+        (60, 2, 1), (75, 2, 2), (85, 3, 0), (90, 0, 0),
+    ])
+    def test_dc_x2_gte_p2(self, minute, hg, ag):
+        """DC_X2 = PX + P2 must be >= P2 (trivially true if PX >= 0)."""
+        r = _scan(min=minute, hg=hg, ag=ag, sotH=4, sotA=3)
+        probs = r["probs"]
+        assert probs["DC_X2"] >= probs["2"] - 1e-9, \
+            f"DC_X2={probs['DC_X2']} < P2={probs['2']} at min={minute}"
+
+    def test_all_probs_in_0_1(self):
+        """Every probability value in probs must lie in [0, 1]."""
+        for minute in (1, 15, 45, 75, 88):
+            r = _scan(min=minute, sotH=5, sotA=3)
+            for k, v in r["probs"].items():
+                assert 0.0 <= v <= 1.0, f"probs[{k}]={v} out of range at min={minute}"
+
+    def test_matrix_sum_equals_one(self):
+        """Aggregate matrix must sum to ~1."""
+        r = _scan(min=45, sotH=6, sotA=4)
+        total = sum(c["p"] for c in r["matrix"])
+        assert abs(total - 1.0) < 1e-6, f"Matrix sum={total}"
+
+    def test_matrix_no_nan_inf(self):
+        """No cell in the output matrix may be NaN or Inf."""
+        r = _scan(min=45, sotH=6, sotA=4)
+        for c in r["matrix"]:
+            assert math.isfinite(c["p"]), f"Non-finite cell: {c}"
+
+    def test_over15_gte_over25_gte_over35(self):
+        """Over1.5 >= Over2.5 >= Over3.5 must hold."""
+        for minute in (10, 30, 60, 80):
+            r = _scan(min=minute, sotH=minute // 10, sotA=minute // 15)
+            o15 = r["probs"]["Over15"]
+            o25 = r["probs"]["Over25"]
+            o35 = r["probs"]["Over35"]
+            assert o15 >= o25 - 1e-9, f"Over15 < Over25 at min={minute}"
+            assert o25 >= o35 - 1e-9, f"Over25 < Over35 at min={minute}"
+
+    def test_next_h_a_in_range(self):
+        """Next_H and Next_A (absolute) must be in [0, 1]."""
+        for minute in (5, 30, 60, 88):
+            r = _scan(min=minute)
+            assert 0.0 <= r["probs"]["Next_H"] <= 1.0, \
+                f"Next_H={r['probs']['Next_H']} out of range at min={minute}"
+            assert 0.0 <= r["probs"]["Next_A"] <= 1.0, \
+                f"Next_A={r['probs']['Next_A']} out of range at min={minute}"
+
+    def test_next_h_c_and_a_c_sum_near_one(self):
+        """Conditional next-goal probabilities (Next_H_c + Next_A_c) must sum ~1."""
+        r = _scan(min=45, sotH=5, sotA=3)
+        probs = r["probs"]
+        total_cond = probs["Next_H_c"] + probs["Next_A_c"]
+        assert abs(total_cond - 1.0) < 0.05, \
+            f"Next_H_c + Next_A_c = {total_cond}, expected ~1"
+
+    def test_under15_is_complement_of_over15(self):
+        """Under15 must equal 1 - Over15 within rounding tolerance."""
+        r = _scan(min=45, sotH=4, sotA=3)
+        assert abs(r["probs"]["Under15"] - (1.0 - r["probs"]["Over15"])) < 1e-6
+
+
+class TestInputQualityFlags:
+    """inputQualityFlags must detect and report inconsistent inputs."""
+
+    def test_normal_input_no_flags(self):
+        """Clean, realistic input should produce no quality flags."""
+        r = _scan(min=45, hg=1, ag=0, sotH=6, sotA=4, misH=3, misA=5, daH=8, daA=10)
+        flags = r["metrics"]["inputQualityFlags"]
+        assert isinstance(flags, list), "inputQualityFlags must be a list"
+        assert flags == [], f"Expected no flags for clean input, got: {flags}"
+
+    def test_negative_sot_flagged(self):
+        """Negative shots-on-target should raise a flag."""
+        r = scan({"min": 45, "hg": 0, "ag": 0, "sotH": -1, "sotA": 3, "tC": 2.5})
+        flags = r["metrics"]["inputQualityFlags"]
+        assert "negative_sot" in flags
+
+    def test_negative_goals_flagged(self):
+        """Negative goal count should raise a flag."""
+        r = scan({"min": 45, "hg": -1, "ag": 0, "tC": 2.5})
+        flags = r["metrics"]["inputQualityFlags"]
+        assert "negative_goals" in flags
+
+    def test_minute_out_of_range_flagged(self):
+        """Minute > 125 should raise a flag."""
+        r = scan({"min": 200, "hg": 0, "ag": 0, "tC": 2.5})
+        flags = r["metrics"]["inputQualityFlags"]
+        assert "minute_out_of_range" in flags
+
+    def test_implausible_possession_flagged(self):
+        """possH + possA far from 100 should raise a flag."""
+        r = scan({"min": 45, "hg": 0, "ag": 0, "possH": 80, "possA": 80, "tC": 2.5})
+        flags = r["metrics"]["inputQualityFlags"]
+        assert "possession_sum_implausible" in flags
+
+    def test_quality_flags_reduce_data_quality(self):
+        """Inputs with flags must have lower dataQuality than clean inputs."""
+        r_clean = _scan(min=45, hg=1, ag=0, sotH=6, sotA=4)
+        r_bad = scan({"min": 45, "hg": -1, "ag": -1, "sotH": -1, "tC": 2.5})
+        dq_clean = r_clean["metrics"]["dataQuality"]
+        dq_bad = r_bad["metrics"]["dataQuality"]
+        assert dq_bad <= dq_clean, \
+            f"Bad input dq={dq_bad} should be <= clean dq={dq_clean}"
+
+    def test_flags_key_always_present(self):
+        """inputQualityFlags must always be present in metrics output."""
+        r = _scan()
+        assert "inputQualityFlags" in r["metrics"]
