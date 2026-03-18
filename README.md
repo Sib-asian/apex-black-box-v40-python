@@ -24,9 +24,23 @@ pip install -r requirements.txt
 streamlit run streamlit_app.py
 ```
 
-The app opens at `http://localhost:8501`.  
-A local Flask API is automatically started in the background (port range 5050-5100).  
-Console output: `[apex-api] Oracle Engine API listening on http://127.0.0.1:XXXX`
+The app opens at `http://localhost:8501`.
+
+---
+
+## Streamlit Cloud deployment
+
+Push to your GitHub repository and connect it to
+[Streamlit Community Cloud](https://streamlit.io/cloud).
+
+**No custom port configuration is required.**
+The Python Oracle Engine communicates with the frontend via the Streamlit
+Component bidirectional protocol (postMessage), so it works out-of-the-box
+on `https://<your-app>.streamlit.app` without any additional server setup.
+
+> **Legacy note:** `main.py` is kept as a backward-compatible entry point.
+> Streamlit Cloud deployments that already point to `main.py` will continue
+> to work — it simply delegates all logic to `streamlit_app.py`.
 
 ---
 
@@ -35,7 +49,7 @@ Console output: `[apex-api] Oracle Engine API listening on http://127.0.0.1:XXXX
 | Engine | Default | Description |
 |--------|---------|-------------|
 | JS | YES | JavaScript engine in-browser (unchanged behaviour) |
-| PY | No | Python port running on local Flask API |
+| PY | No | Python Oracle Engine running server-side via Streamlit Component protocol |
 
 ### Activate the Python engine
 1. Click **⚙️ Engine: JS** button (next to the scan button) — toggles to **⚙️ Engine: PY**
@@ -44,7 +58,7 @@ Console output: `[apex-api] Oracle Engine API listening on http://127.0.0.1:XXXX
 The toggle is per-session and resets on page reload.
 
 ### Automatic fallback
-If the Python API is unreachable, the engine falls back to JS automatically and shows:
+If the Python engine encounters an error, the engine falls back to JS automatically and shows:
 *"Backend Python non raggiungibile — calcolo eseguito con motore JS"*
 
 ---
@@ -52,17 +66,29 @@ If the Python API is unreachable, the engine falls back to JS automatically and 
 ## Architecture
 
 ```
-streamlit_app.py / main.py  <- entry point; starts Flask API, injects port into HTML
+streamlit_app.py        <- entry point; declares Streamlit Component, handles scan/final
+main.py                 <- legacy alias for streamlit_app.py
 apex_black_box/
   engine.py     <- Python Oracle Engine (pure function, no I/O)
-  api.py        <- Flask REST API: POST /api/scan, GET /api/health
+  api.py        <- Flask REST API (optional; for standalone local use)
   steam.py      <- Steam movement utilities
   calibration.py
   utils.py
-static/js/V40.html  <- full UI + JS Oracle Engine (default, unchanged)
+static/js/V40.html  <- full UI + JS Oracle Engine + Streamlit Component bridge
 ```
 
-### API reference
+### How the Python engine works on Streamlit Cloud
+
+1. The frontend (`static/js/V40.html`) is served as a **Streamlit Component** via
+   `streamlit.components.v1.declare_component`.
+2. When the user activates **Engine: PY** and runs a scan, the JS sends the payload
+   to the Streamlit Python backend via `window.parent.postMessage` (Streamlit
+   Component value protocol) — **no custom port or HTTP call needed**.
+3. The Python backend calls `apex_black_box.engine.scan(payload)`, serialises the
+   result as JSON, and passes it back to the component as a render prop.
+4. The JS receives the result and renders it exactly as it would for the JS engine.
+
+### API reference (Flask — local use only)
 
 POST `/api/scan` — payload fields (all optional, default 0):
 
@@ -82,9 +108,12 @@ POST `/api/scan` — payload fields (all optional, default 0):
 
 ## Troubleshooting
 
-- **Port conflict**: app tries 5050-5100 automatically; stop other servers if needed
-- **CORS errors**: Flask-CORS is enabled; API binds to 127.0.0.1 only
-- **PY vs JS differences**: minor floating-point deltas are normal; JS is the reference
+- **Engine: PY toggle shows alert**: you must be running the app inside Streamlit
+  (locally or on Streamlit Cloud). Opening `V40.html` directly in a browser without
+  Streamlit will limit you to the JS engine only.
+- **CORS errors (local Flask)**: Flask-CORS is enabled; `api.py` binds to 127.0.0.1.
+  The Flask server is **not** used by the browser on Streamlit Cloud.
+- **PY vs JS differences**: minor floating-point deltas are normal; JS is the reference.
 
 ---
 
@@ -122,7 +151,8 @@ match (the match name is normalised to a safe file-system identifier).
 2. Enter the final score in `H-A` format (e.g. `2-1`).
 3. Click **OK** — the result is saved in localStorage *and* sent to the backend.
 
-The backend endpoint is `POST /api/final` (body: `{ matchName, hgFT, agFT }`).
+The backend receives `POST /api/final` semantics via the component bridge
+(body: `{ matchName, hgFT, agFT }`).
 If the backend is unavailable the call fails silently and only localStorage is updated.
 
 ### How to run the evaluation script
@@ -143,3 +173,4 @@ Output includes:
 
 > **Note**: only matches that have *both* at least one scan *and* a final score
 > recorded contribute to the evaluation metrics.
+

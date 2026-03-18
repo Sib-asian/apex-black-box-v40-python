@@ -5,6 +5,7 @@ Run with:  pytest tests/test_engine.py -v
 """
 
 from __future__ import annotations
+import json
 import math
 import pytest
 
@@ -1238,3 +1239,58 @@ class TestInputQualityFlags:
         """inputQualityFlags must always be present in metrics output."""
         r = _scan()
         assert "inputQualityFlags" in r["metrics"]
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Smoke check: scan() must return fully JSON-serialisable output
+#  (required for Streamlit Cloud postMessage bridge compatibility).
+# ─────────────────────────────────────────────────────────────────
+
+class TestScanJsonSerializable:
+    """scan() output must be serialisable to JSON without errors."""
+
+    def assert_json_serializable(self, obj, label: str = "result") -> None:
+        try:
+            json_str = json.dumps(obj)
+        except (TypeError, ValueError) as exc:
+            pytest.fail(f"{label} is not JSON-serialisable: {exc}")
+        # Round-trip check: the serialised string must parse back cleanly.
+        parsed = json.loads(json_str)
+        assert isinstance(parsed, (dict, list, str, int, float, bool, type(None)))
+
+    def test_default_payload_is_json_serializable(self):
+        """Default (empty) payload must produce JSON-serialisable output."""
+        result = scan({})
+        self.assert_json_serializable(result, "scan({}) result")
+
+    def test_rich_payload_is_json_serializable(self):
+        """A realistic rich payload must produce JSON-serialisable output."""
+        payload = {
+            "min": 55, "rec": 3, "hg": 1, "ag": 1,
+            "sotH": 7, "sotA": 5, "misH": 4, "misA": 6,
+            "corH": 4, "corA": 3, "daH": 12, "daA": 10,
+            "rcH": 0, "rcA": 1,
+            "tC": 2.75, "sC": -0.25, "tO": 2.75, "sO": -0.25,
+            "possH": 55, "possA": 45,
+            "isKnockout": True,
+            "matchName": "Team A vs Team B",
+        }
+        result = scan(payload)
+        self.assert_json_serializable(result, "scan(rich_payload) result")
+
+    def test_all_probs_are_finite(self):
+        """Every probability value must be a finite float (no NaN / inf)."""
+        result = scan({"min": 45, "hg": 0, "ag": 0, "tC": 2.5})
+        for k, v in result["probs"].items():
+            assert math.isfinite(v), f"probs[{k}]={v} is not finite"
+
+    def test_extreme_inputs_are_json_serializable(self):
+        """Extreme / edge-case inputs must still produce serialisable output."""
+        for payload in (
+            {"min": 0, "tC": 0.5},
+            {"min": 90, "hg": 5, "ag": 0, "sotH": 30, "tC": 9.0},
+            {"min": 120, "rcH": 2, "rcA": 2, "isKnockout": True},
+        ):
+            result = scan(payload)
+            self.assert_json_serializable(result, f"scan({payload})")
+
