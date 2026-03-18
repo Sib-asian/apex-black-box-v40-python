@@ -19,7 +19,10 @@ from pathlib import Path
 
 ENGINE_VERSION = "v40"
 LOG_DIR = Path("data/logs")
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
 
 # Snapshot minutes — kept in sync between Flask API and Streamlit.
 # This module is the single source of truth — do not redefine in api.py or streamlit_app.py.
@@ -57,6 +60,7 @@ def sanitize_payload(payload: dict) -> dict:
 # ── Supabase integration (lazy init) ─────────────────────────────
 _supabase_client = None
 _supabase_init_done = False
+_supabase_lock = threading.Lock()
 
 
 def _get_supabase():
@@ -64,27 +68,33 @@ def _get_supabase():
     global _supabase_client, _supabase_init_done
     if _supabase_init_done:
         return _supabase_client
-    _supabase_init_done = True
-    try:
-        url = None
-        key = None
-        # Try Streamlit secrets first
+    with _supabase_lock:
+        if _supabase_init_done:  # double-checked locking
+            return _supabase_client
+        _supabase_init_done = True
         try:
-            import streamlit as st
-            url = st.secrets.get("SUPABASE_URL")
-            key = st.secrets.get("SUPABASE_KEY")
-        except Exception:
-            pass
-        # Fallback to env vars
-        if not url:
-            url = os.environ.get("SUPABASE_URL")
-        if not key:
-            key = os.environ.get("SUPABASE_KEY")
-        if url and key:
-            from supabase import create_client
-            _supabase_client = create_client(url, key)
-    except Exception as exc:
-        print(f"[log_utils] Supabase init failed: {exc}", file=sys.stderr)
+            url = None
+            key = None
+            # Try Streamlit secrets first
+            try:
+                import streamlit as st
+                url = st.secrets.get("SUPABASE_URL")
+                key = st.secrets.get("SUPABASE_KEY")
+            except Exception:
+                pass
+            # Fallback to env vars
+            if not url:
+                url = os.environ.get("SUPABASE_URL")
+            if not key:
+                key = os.environ.get("SUPABASE_KEY")
+            if url and key:
+                from supabase import create_client
+                _supabase_client = create_client(url, key)
+                print("[log_utils] Supabase client initialized OK", file=sys.stderr)
+            else:
+                print("[log_utils] Supabase disabled (no credentials found)", file=sys.stderr)
+        except Exception as exc:
+            print(f"[log_utils] Supabase init failed: {exc}", file=sys.stderr)
     return _supabase_client
 
 
@@ -139,17 +149,28 @@ def append_jsonl(match_id: str, obj: dict) -> None:
     _supabase_insert_async(match_id, obj)
 
 
+def _initial_match_state() -> dict:
+    """Return a fresh initial state dict for a new match."""
+    return {
+        "next_snap_idx": 0,
+        "last_hg": -1,
+        "last_ag": -1,
+        "last_rcH": -1,
+        "last_rcA": -1,
+    }
+
+
 def get_match_state(match_id: str) -> dict:
-    """Return (creating if needed) the mutable state dict for match_id."""
+    """Return (creating if needed) the mutable state dict for match_id.
+
+    .. warning::
+        The returned dict is a **direct reference** to the internal state.
+        It must only be mutated while holding ``_match_states_lock`` to avoid
+        race conditions.
+    """
     with _match_states_lock:
         if match_id not in _match_states:
-            _match_states[match_id] = {
-                "next_snap_idx": 0,
-                "last_hg": -1,
-                "last_ag": -1,
-                "last_rcH": -1,
-                "last_rcA": -1,
-            }
+            _match_states[match_id] = _initial_match_state()
         return _match_states[match_id]
 
 
@@ -174,8 +195,10 @@ def maybe_log_scan(
 
     tags_to_log: list[str] = []
 
-    state = get_match_state(match_id)
     with _match_states_lock:
+        if match_id not in _match_states:
+            _match_states[match_id] = _initial_match_state()
+        state = _match_states[match_id]
         # Snapshot thresholds: log first scan that reaches each threshold minute
         idx = state["next_snap_idx"]
         while idx < len(SNAP_MINUTES) and minute >= SNAP_MINUTES[idx]:
