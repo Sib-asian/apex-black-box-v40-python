@@ -117,7 +117,60 @@ POST `/api/scan` — payload fields (all optional, default 0):
 
 ---
 
-## Logging & Evaluation
+## Supabase persistence
+
+When deployed on **Streamlit Cloud**, FINAL-score events are automatically
+persisted to a [Supabase](https://supabase.com) table.
+
+### Required secrets
+
+Add the following secrets in your Streamlit Cloud app settings
+(**Settings → Secrets**):
+
+```toml
+SUPABASE_URL = "https://<your-project>.supabase.co"
+SUPABASE_KEY = "<your-anon-or-service-role-key>"
+```
+
+For local development you can set the same values as environment variables:
+
+```bash
+export SUPABASE_URL="https://<your-project>.supabase.co"
+export SUPABASE_KEY="<your-key>"
+```
+
+### Table schema
+
+Create the following table in your Supabase project (`SQL editor → New query`):
+
+```sql
+create table if not exists public.match_logs (
+  id         bigserial primary key,
+  match_id   text        not null,
+  entry      jsonb       not null,
+  created_at timestamptz not null default now()
+);
+```
+
+RLS can remain disabled for private projects, or you may enable it and add
+an appropriate policy for your use-case.
+
+### What is logged
+
+| Event | When |
+|-------|------|
+| `type: "final"` | User submits the full-time score via **📊 RIS.** |
+
+Each row contains a `match_id` (derived from the match name) and an `entry`
+JSON object with: `type`, `match_id`, `matchName`, `engine_version`, `ts`
+(UTC ISO-8601), `hg_ft`, `ag_ft`, and a sanitized subset of the live payload.
+
+> **Note:** if Supabase credentials are absent or the insert fails, the app
+> continues normally — only a warning is printed to stderr.
+
+---
+
+## Local file logging (Evaluation)
 
 ### Where logs are stored
 

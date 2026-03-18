@@ -11,7 +11,6 @@ import shutil
 import sys
 import tempfile
 import traceback
-from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -24,6 +23,8 @@ from apex_black_box.log_utils import (
     append_jsonl as _append_jsonl,
     maybe_log_scan as _maybe_log_scan,
     sanitize_payload as _sanitize_payload,
+    build_match_log_entry as _build_match_log_entry,
+    insert_match_log as _insert_match_log,
 )
 
 st.set_page_config(page_title="Apex Black Box v4.0", layout="wide")
@@ -103,15 +104,7 @@ if component_value and isinstance(component_value, dict):
             match_name = str(payload.get("matchName", ""))
             match_id = _safe_match_id(match_name)
             if match_id and match_id != "unknown_match":
-                entry = {
-                    "type": "final",
-                    "match_id": match_id,
-                    "matchName": match_name,
-                    "engine_version": _ENGINE_VERSION,
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "hg_ft": int(payload.get("hgFT", 0)),
-                    "ag_ft": int(payload.get("agFT", 0)),
-                }
-                _append_jsonl(match_id, entry)
+                entry = _build_match_log_entry(match_id, match_name, payload)
+                _insert_match_log(match_id, entry)
             st.session_state["_apex_last_req_id"] = req_id
 
