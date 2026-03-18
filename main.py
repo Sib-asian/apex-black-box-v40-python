@@ -10,9 +10,13 @@ continue to work without any changes.
 """
 
 import pathlib
-import runpy
+import sys
 
-runpy.run_path(
-    str(pathlib.Path(__file__).parent / "streamlit_app.py"),
-    run_name="__main__",
-)
+# Ensure the repo root is on the path
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+
+# Execute streamlit_app.py in the correct file context so that
+# st.secrets, __file__, and all Streamlit internals work correctly.
+_app = pathlib.Path(__file__).parent / "streamlit_app.py"
+with open(_app, encoding="utf-8") as _f:
+    exec(compile(_f.read(), str(_app), "exec"), {"__file__": str(_app), "__name__": "__main__", "__builtins__": __builtins__})
