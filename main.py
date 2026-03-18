@@ -4,19 +4,24 @@ Apex Black Box v4.0 – legacy entry point kept for backward compatibility.
 Preferred command:  streamlit run streamlit_app.py
 Equivalent command: streamlit run main.py
 
-All logic lives in streamlit_app.py; this file simply re-executes it so
-that existing Streamlit Cloud configurations that point to main.py
-continue to work without any changes.
+All logic lives in streamlit_app.py.  This file imports it so that
+existing Streamlit Cloud configurations that point to main.py continue
+to work without any changes.
+
+We use ``import streamlit_app`` rather than ``exec`` / ``compile``
+because Streamlit's component registry (``declare_component``) inspects
+the calling module's ``__name__`` and ``__spec__`` at registration time.
+Running the file through ``exec`` leaves those attributes as ``None``,
+which raises ``RuntimeError: module is None`` when the component is
+first declared.  A normal import preserves all module metadata and
+avoids that crash.
 """
 
-import pathlib
 import sys
+from pathlib import Path
 
-# Ensure the repo root is on the path
-sys.path.insert(0, str(pathlib.Path(__file__).parent))
+# Ensure the repo root is on sys.path so ``import streamlit_app`` works
+# regardless of the working directory Streamlit Cloud uses.
+sys.path.insert(0, str(Path(__file__).parent))
 
-# Execute streamlit_app.py in the correct file context so that
-# st.secrets, __file__, and all Streamlit internals work correctly.
-_app = pathlib.Path(__file__).parent / "streamlit_app.py"
-with open(_app, encoding="utf-8") as _f:
-    exec(compile(_f.read(), str(_app), "exec"), {"__file__": str(_app), "__name__": "__main__", "__builtins__": __builtins__})
+import streamlit_app  # noqa: F401, E402
