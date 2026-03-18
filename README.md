@@ -142,6 +142,14 @@ log lines appear:
 - Reload the page; Streamlit Cloud can occasionally take a few seconds to wake up
   after inactivity.
 
+**Protocol note:** The backend automatically handles both payload shapes the
+frontend may produce:
+- Direct: `{"action": "scan", "payload": {...}, "reqId": "..."}`
+- Wrapped: `{"value": {"action": "scan", "payload": {...}, "reqId": "..."} }`
+
+After a `final` action is processed the backend calls `st.rerun()` to trigger
+an immediate render cycle, ensuring the frontend receives a response quickly.
+
 ---
 
 ## Supabase persistence
