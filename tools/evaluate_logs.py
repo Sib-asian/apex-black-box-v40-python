@@ -51,6 +51,10 @@ def _labels_from_ft(hg: int, ag: int) -> dict[str, float]:
         "over25": 1.0 if total >= 3 else 0.0,
         "over35": 1.0 if total >= 4 else 0.0,
         "btts":   1.0 if hg > 0 and ag > 0 else 0.0,
+        # Fix 4: missing markets added
+        "under25":    1.0 if total <= 2 else 0.0,
+        # noMoreGoals at FT: always 1.0 (no additional goals fell after observation)
+        "noMoreGoals": 1.0,
     }
 
 
@@ -181,7 +185,7 @@ def pair_scans_with_final(
 # ── metrics accumulation ─────────────────────────────────────────
 
 # M1: robust key list covers all engine variants (case-insensitive approach)
-BINARY_MARKETS = ["over25", "over15", "over35", "btts"]
+BINARY_MARKETS = ["over25", "over15", "over35", "btts", "under25", "noMoreGoals"]
 ALL_TAGS = ["snap_20", "snap_40", "snap_60", "snap_80", "goal_event", "red_event"]
 
 # Minute bucket definitions: [lo, hi) pairs; last bucket is open-ended (75–90+)
@@ -272,6 +276,8 @@ def _probs_from_scan(scan: dict) -> dict[str, float | None]:
         "over15": None,
         "over35": None,
         "btts":   None,
+        "under25":     None,
+        "noMoreGoals": None,
     }
 
     # M1: over25 — try all known key variants (case-insensitive robust mapping)
@@ -293,6 +299,16 @@ def _probs_from_scan(scan: dict) -> dict[str, float | None]:
     for k in ("btts", "BTTS"):
         if k in probs:
             result["btts"] = _safe(probs[k])
+            break
+    # Fix 4: under25 — try all known key variants
+    for k in ("under25", "Under25", "u25", "UNDER25"):
+        if k in probs:
+            result["under25"] = _safe(probs[k])
+            break
+    # Fix 4: noMoreGoals
+    for k in ("noMoreGoals", "NoMoreGoals", "no_more_goals", "nomorGoals"):
+        if k in probs:
+            result["noMoreGoals"] = _safe(probs[k])
             break
 
     return result

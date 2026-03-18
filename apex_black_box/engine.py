@@ -58,6 +58,23 @@ _ET_CACHE_LOCK = threading.Lock()
 _LFC: list[float] = [0.0]
 _LFC_LOCK = threading.Lock()  # F5: thread-safe cache
 
+# Fix 12 (evolutivo): Optional post-hoc calibrators (disabled by default).
+# Activated via set_calibrator(); no impact if none registered.
+_calibrators: dict[str, Any] = {}  # market_id -> IsotonicCalibrator
+
+
+def set_calibrator(market_id: str, calibrator: Any) -> None:
+    """Register an IsotonicCalibrator for post-hoc probability calibration.
+
+    After setting, engine.scan() will apply the calibrator to the relevant
+    market probability before returning.
+
+    Args:
+        market_id: One of "Over25", "BTTS", "1", "X", "2", "Over35"
+        calibrator: A fitted IsotonicCalibrator instance.
+    """
+    _calibrators[market_id] = calibrator
+
 
 # ─────────────────────────────────────────────────────────────────
 #  MATH HELPERS
@@ -521,14 +538,51 @@ def build_steam_advice(
     Generate pre-match betting advice from steam movement data.
 
     Uses Asian Handicap opening/closing + Total opening/closing to produce
-    structured pre-match tips. Each tip has:
+    structured pre-match tips.  Each tip has (backward-compat fields):
       - market: str  (e.g. "AH Casa -0.5", "Over 2.5", "1")
       - reason: str  (brief Italian-language rationale)
-      - strength: "forte" | "medio" | "debole"
+      - strength: "forte" | "medio" | "debole"   (lowercase, backward-compat)
       - confidence_req: float  (minimum confidence needed to act, 0–1)
+    Plus JS-compatible fields added by Fix 1 (schema-mismatch fix):
+      - icon: str        emoji icon matching the advice type
+      - cat: str         UPPERCASE category (e.g. "AH", "TOTALE", "BTTS")
+      - pick: str        same as market (alias for JS renderAdvice)
+      - note: str        same as reason (alias for JS renderAdvice)
+      - fairOdd: str     "1/prob:.2f" or "—" when prob ≤ 0.005
+      - prob: float      pre-match probability from Poisson matrix
+      - strength: str    UPPERCASE for JS (overrides lowercase value)
 
     Returns a list of advice dicts (may be empty if no signal).
     """
+    # ── Pre-match Poisson probabilities for prob/fairOdd fields ──────────────
+    # Derive lambdas from closing total/spread, clamped to a safe range.
+    _lH = max(0.15, (t_c - s_c) / 2)
+    _lA = max(0.15, (t_c + s_c) / 2)
+    _pre_matrix = build_result_matrix(_lH, _lA, 0)
+    _agg = aggregate_from_matrix(_pre_matrix, 0, 0)
+
+    def _fair_odd(prob: float) -> str:
+        """Return a formatted fair-odd string, or '—' for negligible probs."""
+        if prob > 0.005:
+            return f"{1.0 / prob:.2f}"
+        return "—"
+
+    def _strength_up(s: str) -> str:
+        """Map lowercase strength to UPPERCASE for JS compatibility."""
+        return {"forte": "FORTE", "medio": "MEDIO", "debole": "DEBOLE"}.get(s, s.upper())
+
+    def _enrich(adv: dict, icon: str, cat: str, prob: float) -> dict:
+        """Inject the JS-compatible fields into an advice dict in-place."""
+        adv["icon"] = icon
+        adv["cat"] = cat
+        adv["pick"] = adv.get("market", "")
+        adv["note"] = adv.get("reason", "")
+        adv["prob"] = round(prob, 4)
+        adv["fairOdd"] = _fair_odd(prob)
+        # strength UPPERCASE (replaces lowercase value; backward-compat code that
+        # reads the lowercase version should use .lower() if needed)
+        adv["strength"] = _strength_up(adv.get("strength", "debole"))
+        return adv
     advice: list[dict] = []
     level = steam_result.get("level", "none")
     d_spread = steam_result.get("dSpread", 0.0)
@@ -714,6 +768,64 @@ def build_steam_advice(
         seen_families.values(),
         key=lambda a: _STRENGTH_ORDER.get(a.get("strength", "debole"), 2),
     )
+
+    # ── Fix 1: Enrich deduplicated advice with JS-compatible fields ───────────
+    # Applied after deduplication so strength ranking (lowercase) is unaffected.
+    # Mapping from market name pattern → (icon, cat, prob).
+    def _resolve_icon_cat_prob(mkt: str) -> tuple[str, str, float]:
+        if "Combo: Casa" in mkt:
+            return "🔥", "CONSENSO", clamp01(_agg.get("p1", 0.0) * _agg.get("pOver25", 0.0))
+        if "Combo: Trasferta" in mkt:
+            return "🔥", "CONSENSO", clamp01(_agg.get("p2", 0.0) * _agg.get("pOver25", 0.0))
+        if "AH Casa" in mkt:
+            return "🏠", "AH", float(_agg.get("pDNB_H", 0.0))
+        if "AH Trasferta" in mkt:
+            return "✈️", "AH", float(_agg.get("pDNB_A", 0.0))
+        if "1 (Vittoria Casa)" in mkt:
+            return "🏠", "1X2", float(_agg.get("p1", 0.0))
+        if "2 (Vittoria Trasferta)" in mkt:
+            return "✈️", "1X2", float(_agg.get("p2", 0.0))
+        if mkt.startswith("Over"):
+            try:
+                _line = float(mkt.split()[-1])
+            except (ValueError, IndexError):
+                _line = 2.5
+            if abs(_line - 2.5) < 0.01:
+                prob_o = float(_agg.get("pOver25", 0.0))
+            elif abs(_line - 1.5) < 0.01:
+                prob_o = float(_agg.get("pOver15", 0.0))
+            elif abs(_line - 3.5) < 0.01:
+                prob_o = float(_agg.get("pOver35", 0.0))
+            else:
+                prob_o = float(_agg.get("pOver25", 0.0))
+            return "⬆️", "TOTALE", prob_o
+        if mkt.startswith("Under"):
+            try:
+                _line = float(mkt.split()[-1])
+            except (ValueError, IndexError):
+                _line = 2.5
+            if abs(_line - 2.5) < 0.01:
+                prob_u = clamp01(1.0 - float(_agg.get("pOver25", 0.0)))
+            elif abs(_line - 1.5) < 0.01:
+                prob_u = clamp01(1.0 - float(_agg.get("pOver15", 0.0)))
+            elif abs(_line - 3.5) < 0.01:
+                prob_u = clamp01(1.0 - float(_agg.get("pOver35", 0.0)))
+            else:
+                prob_u = clamp01(1.0 - float(_agg.get("pOver25", 0.0)))
+            return "⬇️", "TOTALE", prob_u
+        if "BTTS Sì" in mkt:
+            return "⚽", "BTTS", float(_agg.get("pBTTS", 0.0))
+        if "BTTS No" in mkt:
+            return "🛡️", "BTTS", clamp01(1.0 - float(_agg.get("pBTTS", 0.0)))
+        if "⚠️" in mkt or "ℹ️" in mkt:
+            return "⚠️", "ATTENZIONE", 0.0
+        return "📊", "1X2", 0.0
+
+    for adv in deduplicated:
+        mkt = adv.get("market", "")
+        icon, cat, prob = _resolve_icon_cat_prob(mkt)
+        _enrich(adv, icon, cat, prob)
+
     return deduplicated
 
 
@@ -940,6 +1052,22 @@ def scan(payload: dict) -> dict:
             if trend_boost_a < 0.94:
                 alerts.append({"type": "tactical", "msg": "La trasferta sta calando nel tempo — ritmo offensivo in diminuzione."})
 
+            # Fix 10 (evolutivo): Anti-drift alert — segnala se pOver25 cala
+            # costantemente in 3+ scan consecutivi (tendenza a partita chiusa).
+            # Usa pO (alias breve) o pOver25 dall'engine storico, entrambi validi.
+            # filtered[0] is the scan closest to current minute (first in list),
+            # filtered[-1] is the oldest — [0]>[1]>[2] means declining over time.
+            if len(filtered) >= 3:
+                def _get_pover(h: dict) -> float:
+                    return float(h.get("pO", h.get("pOver25", 0)) or 0)
+                over25_trend = [_get_pover(h) for h in filtered if _get_pover(h) > 0]
+                if (len(over25_trend) >= 3
+                        and over25_trend[0] > over25_trend[1] > over25_trend[2]):
+                    alerts.append({
+                        "type": "tactical",
+                        "msg": f"📉 Over 2.5 in calo costante negli ultimi scan ({over25_trend[2]:.0%}→{over25_trend[1]:.0%}→{over25_trend[0]:.0%}) — tendenza a partita chiusa.",
+                    })
+
     if pace_h > 40:
         alerts.append({"type": "tactical", "msg": "🔥 La casa mantiene un buon ritmo offensivo — continua a creare occasioni"})
     if pace_a > 40:
@@ -956,8 +1084,17 @@ def scan(payload: dict) -> dict:
     # → lambda = h_xg_pre (pure prior blend, correct behaviour)
     sw_scale_h = clamp(sample_w_h / 0.40, 0.0, 1.0)
     sw_scale_a = clamp(sample_w_a / 0.40, 0.0, 1.0)
-    sig_h = sigmoid_weight(minute)
-    sig_a = sigmoid_weight(minute)
+    # sig_h and sig_a start from the same sigmoid base — the temporal blend weight
+    # does not depend on which team it applies to, only on the match minute.
+    # Fix 8 (evolutivo): possesso-adjusted sigmoid — the team with more possession
+    # has more reliable live data (more actions), so its blend leans slightly more
+    # live.  Scaling is ±8% max around the base value (conservative, no overfit).
+    _sig_base = sigmoid_weight(minute)
+    # poss_h/poss_a are already clamped to [0.20, 0.80] as fractions
+    _poss_weight_h = clamp(_sig_base * (0.92 + poss_h * 0.16), 0.0, 1.0)
+    _poss_weight_a = clamp(_sig_base * (0.92 + poss_a * 0.16), 0.0, 1.0)
+    sig_h = _poss_weight_h
+    sig_a = _poss_weight_a
     w_h = sig_h * sw_scale_h + sample_w_h * (1.0 - sw_scale_h)
     w_a = sig_a * sw_scale_a + sample_w_a * (1.0 - sw_scale_a)
     lambda_h = clamp(h_xg_pre * (1 - w_h) + xg_rate_h * 90 * w_h, 0.10, 3.5)
@@ -1167,6 +1304,23 @@ def scan(payload: dict) -> dict:
             lambda_a = base_lambda_a * MULT_GUARD_MIN
     lambda_h = clamp(lambda_h, 0.05, 3.5)
     lambda_a = clamp(lambda_a, 0.05, 3.5)
+
+    # Score-state model (evolutivo) — Fix 9
+    # La squadra in svantaggio aumenta il ritmo offensivo, quella in vantaggio difende.
+    # Attivo solo dal minuto 30 (dati abbastanza stabili).  Fattore massimo ±12%
+    # (calibrato conservativamente; non modifica la struttura dell'output).
+    # Applicato DOPO il MULT_GUARD così mantiene gli stessi guardrail.
+    if minute >= 30:
+        _diff_live = abs(hg - ag)
+        _ss_factor = clamp(_diff_live * 0.04, 0.0, 0.12)
+        if hg > ag:
+            # Casa in vantaggio: difende → minor lambda casa, trasferta spinge
+            lambda_h = clamp(lambda_h * (1.0 - _ss_factor * 0.5), 0.10, 3.5)
+            lambda_a = clamp(lambda_a * (1.0 + _ss_factor), 0.10, 3.5)
+        elif ag > hg:
+            # Trasferta in vantaggio: difende → minor lambda trasf, casa spinge
+            lambda_a = clamp(lambda_a * (1.0 - _ss_factor * 0.5), 0.10, 3.5)
+            lambda_h = clamp(lambda_h * (1.0 + _ss_factor), 0.10, 3.5)
 
     # ── Proiezione gol rimanenti ──────────────────────────────────
     max_time = 90 + rec
@@ -1577,5 +1731,24 @@ def scan(payload: dict) -> dict:
     except Exception:
         _log.warning("verdict.generate_verdict() failed; frontend will fall back to JS", exc_info=True)
         pass  # verdict failure is non-fatal; frontend falls back to JS generateAdvice()
+
+    # Fix 12: Apply optional post-hoc calibrators (no-op if none registered).
+    # Runs after verdict so that calibrated probs are in the final result but
+    # do not retroactively change the verdict (which already used uncalibrated probs).
+    if _calibrators:
+        probs_out = _result.get("probs", {})
+        _CAL_MAP = {
+            "Over25": "Over25",   # probs key → result probs key (same casing)
+            "BTTS":   "BTTS",
+            "Over35": "Over35",
+            "1": "1", "X": "X", "2": "2",
+        }
+        for mkt, cal in _calibrators.items():
+            pkey = _CAL_MAP.get(mkt)
+            if pkey and pkey in probs_out:
+                try:
+                    probs_out[pkey] = round(cal.predict(probs_out[pkey]), 4)
+                except Exception:
+                    pass
 
     return _result
