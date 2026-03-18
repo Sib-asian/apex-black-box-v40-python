@@ -12,7 +12,7 @@
             --chaos-orange:#ff4500; --alert-purple:#8855cc; --steam-color:#4499ff;
         }
         * { box-sizing:border-box; margin:0; padding:0; }
-        body { font-family:'Courier New',Courier,monospace; background:var(--dark-bg); color:var(--text-main); padding:10px; display:flex; justify-content:center; }
+        body { font-family:'Courier New',Courier,monospace; background:var(--dark-bg); color:var(--text-main); padding:10px; padding-bottom: calc(10px + env(safe-area-inset-bottom)); display:flex; justify-content:center; }
         .container { max-width:1100px; width:100%; }
         h1 { text-align:center; color:var(--gold); text-transform:uppercase; letter-spacing:10px; border-bottom:1px solid var(--panel-border); padding-bottom:5px; margin-bottom:5px; font-weight:900; text-shadow:0 0 15px rgba(255,183,0,0.3); font-size:1.8em; }
         .subtitle { text-align:center; color:var(--text-muted); font-size:0.7em; margin-bottom:15px; text-transform:uppercase; letter-spacing:3px; }
@@ -313,12 +313,63 @@ window.addEventListener('message', function (event) {
     }
 });
 
+// ── Dynamic iframe height sync (fixes iPhone Safari scroll truncation) ───────
+// Small buffer added on top of the measured document height so that Streamlit
+// never clips the last few pixels of content or the safe-area padding.
+var _APEX_HEIGHT_PAD = 24;
+
+function _apexGetDocHeight() {
+    var body = document.body;
+    var docEl = document.documentElement;
+    return Math.max(
+        body   ? body.scrollHeight   : 0,
+        body   ? body.offsetHeight   : 0,
+        docEl  ? docEl.scrollHeight  : 0,
+        docEl  ? docEl.offsetHeight  : 0
+    ) + _APEX_HEIGHT_PAD;
+}
+
+function _apexSyncFrameHeight() {
+    if (!_apexBridgeAvailable) return;
+    _apexSendToStreamlit('streamlit:setFrameHeight', { height: _apexGetDocHeight() });
+}
+
+// Debounce handle for MutationObserver-triggered syncs.
+var _apexHeightDebounceTimer = null;
+function _apexDebouncedHeightSync() {
+    clearTimeout(_apexHeightDebounceTimer);
+    _apexHeightDebounceTimer = setTimeout(_apexSyncFrameHeight, 100);
+}
+
+// On explicit events (DOMContentLoaded, resize, orientationchange) we schedule
+// multiple retries because iOS Safari stabilises layout across several ticks:
+// immediate → after microtasks flush (50 ms) → after fonts/images (250 ms) → final (800 ms).
+function _apexScheduleHeightSync() {
+    _apexSyncFrameHeight();
+    setTimeout(_apexSyncFrameHeight, 50);
+    setTimeout(_apexSyncFrameHeight, 250);
+    setTimeout(_apexSyncFrameHeight, 800);
+}
+
 // Signal component readiness to Streamlit on first load.
 document.addEventListener('DOMContentLoaded', function () {
     if (_apexBridgeAvailable) {
         _apexSendToStreamlit('streamlit:componentReady', { apiVersion: 1 });
-        _apexSendToStreamlit('streamlit:setFrameHeight', { height: 980 });
+        _apexScheduleHeightSync();
     }
+});
+
+// Re-sync height when DOM changes (log entries / result panels appear).
+// Scoped to .container to avoid reacting to unrelated document-level changes.
+var _apexHeightObs = new MutationObserver(function () { _apexDebouncedHeightSync(); });
+var _apexContainer = document.querySelector('.container');
+_apexHeightObs.observe(_apexContainer || document.body, { childList: true, subtree: true });
+
+// Re-sync on viewport changes: rotate, resize, iOS keyboard, tab switch.
+window.addEventListener('resize', _apexScheduleHeightSync);
+window.addEventListener('orientationchange', _apexScheduleHeightSync);
+document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) { _apexScheduleHeightSync(); }
 });
 
 // Send a scan/final request to the Python backend; returns a Promise.

@@ -150,7 +150,7 @@ def _maybe_log_scan(match_id: str, match_name: str, payload: dict, result: dict)
 
 component_value = _apex_component(
     key="apex_main",
-    height=980,
+    height=1200,
     pyScanResult=st.session_state.get("_apex_py_result"),
 )
 
