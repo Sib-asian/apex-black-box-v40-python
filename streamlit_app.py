@@ -28,6 +28,7 @@ from apex_black_box.log_utils import (
 )
 
 st.set_page_config(page_title="Apex Black Box v4.0", layout="wide")
+print(f"[Apex] app started engine_version={_ENGINE_VERSION}", file=sys.stderr, flush=True)
 
 # ── Build the Streamlit component once per process ───────────────
 # declare_component requires a directory containing index.html.
@@ -72,6 +73,11 @@ if component_value and isinstance(component_value, dict):
     payload = component_value.get("payload") or {}
 
     if req_id and req_id != st.session_state.get("_apex_last_req_id"):
+        print(
+            f"[Apex] component request received: action={action} reqId={req_id}"
+            f" match={_safe_match_id(str(payload.get('matchName', '')))}",
+            file=sys.stderr, flush=True,
+        )
         if action == "scan":
             try:
                 result = engine.scan(payload)
@@ -85,6 +91,7 @@ if component_value and isinstance(component_value, dict):
                     "reqId": req_id,
                 }
             except (ValueError, TypeError, KeyError, RuntimeError) as exc:
+                print(f"[Apex] scan error: {exc}", file=sys.stderr, flush=True)
                 st.session_state["_apex_py_result"] = {
                     "ok": False,
                     "error": str(exc),
@@ -101,10 +108,14 @@ if component_value and isinstance(component_value, dict):
             st.rerun()
 
         elif action == "final":
-            match_name = str(payload.get("matchName", ""))
-            match_id = _safe_match_id(match_name)
-            if match_id and match_id != "unknown_match":
-                entry = _build_match_log_entry(match_id, match_name, payload)
-                _insert_match_log(match_id, entry)
+            try:
+                match_name = str(payload.get("matchName", ""))
+                match_id = _safe_match_id(match_name)
+                if match_id and match_id != "unknown_match":
+                    entry = _build_match_log_entry(match_id, match_name, payload)
+                    _insert_match_log(match_id, entry)
+            except Exception as exc:
+                print(f"[Apex] final error: {exc}", file=sys.stderr, flush=True)
+                traceback.print_exc(file=sys.stderr)
             st.session_state["_apex_last_req_id"] = req_id
 

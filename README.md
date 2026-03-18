@@ -114,6 +114,33 @@ POST `/api/scan` — payload fields (all optional, default 0):
 - **CORS errors (local Flask)**: Flask-CORS is enabled; `api.py` binds to 127.0.0.1.
   The Flask server is **not** used by the browser on Streamlit Cloud.
 - **PY vs JS differences**: minor floating-point deltas are normal; JS is the reference.
+- **No logs in Streamlit Cloud "Manage app → Logs"**: see the dedicated section below.
+
+### Verifying the Streamlit component bridge (Manage app → Logs)
+
+When the component bridge is working correctly you should see log lines like:
+
+```
+[Apex] app started engine_version=4.0
+[Apex] component request received: action=scan reqId=r1_... match=...
+[Apex] component request received: action=final reqId=r2_... match=...
+```
+
+**Steps to verify:**
+
+1. Open your Streamlit Cloud app and click **Manage app** (bottom-right) → **Logs**.
+2. In the UI, enter a match name, fill in the live stats, and click **ESEGUI V40 SCAN**.
+3. In Logs you should see a line containing `action=scan`.
+4. Submit the final score via **📊 RIS.** — you should see `action=final`.
+
+**If you see the red banner** _"Backend Streamlit non connesso"_ in the UI, or no
+log lines appear:
+
+- Make sure you are accessing the app via the Streamlit Cloud URL (not by opening
+  `V40.html` directly in a browser).
+- Check the Logs for Python startup errors (`[Apex] app started` should appear).
+- Reload the page; Streamlit Cloud can occasionally take a few seconds to wake up
+  after inactivity.
 
 ---
 

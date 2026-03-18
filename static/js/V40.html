@@ -170,6 +170,10 @@
     <div id="_apexFallbackNote" style="display:none;background:rgba(255,183,0,0.08);border:1px solid rgba(255,183,0,0.3);color:var(--gold);font-size:0.7em;padding:4px 10px;border-radius:3px;text-align:center;margin-bottom:4px">
         ⚠️ Backend Python non raggiungibile — calcolo eseguito con motore JS
     </div>
+    <!-- Bridge warning: shown after 2 s if Streamlit runtime hasn't replied -->
+    <div id="_apexNoBridgeBanner" style="display:none;background:rgba(255,0,60,0.1);border:1px solid rgba(255,0,60,0.4);color:#ff8899;font-size:0.7em;padding:6px 10px;border-radius:3px;text-align:center;margin-bottom:6px">
+        ⚠️ Backend Streamlit non connesso — il component bridge non è inizializzato. Scan e Final non raggiungeranno Python. Ricarica la pagina o verifica che l'app sia attiva su Streamlit Cloud.
+    </div>
 
     <div class="memory-bar">
         <select id="savedMatches" onchange="loadSelectedMatch()"><option value="">-- Nuova Partita --</option></select>
@@ -287,23 +291,33 @@
 //  Falls back to JS engine gracefully if outside Streamlit context.
 // ════════════════════════════════════════════════════════════════
 
-// Detect whether we are running inside a Streamlit iframe.
-const _apexBridgeAvailable = (function () {
-    try { return window.parent !== window; } catch (_) { return false; }
-}());
+// Bridge availability: starts false; becomes true only after a real
+// streamlit:render handshake is received from the Streamlit runtime.
+// (window.parent !== window is true for ANY iframe, not just Streamlit.)
+let _apexBridgeAvailable = false;
+let _apexHandshakeDone = false;
 
 let _apexReqIdCounter = 0;
 const _apexPendingReqs = {};  // reqId -> { resolve, reject, timer }
 
 function _apexSendToStreamlit(type, data) {
     const msg = Object.assign({}, data, { isStreamlitMessage: true, type: type });
-    window.parent.postMessage(msg, '*');
+    try { window.parent.postMessage(msg, '*'); } catch (_) {}
 }
 
 // Receive Python responses via Streamlit render events.
+// NOTE: Streamlit does NOT add isStreamlitMessage to its outbound messages;
+// filter only on the type field.
 window.addEventListener('message', function (event) {
-    if (!event.data || !event.data.isStreamlitMessage) return;
-    if (event.data.type !== 'streamlit:render') return;
+    if (!event.data || event.data.type !== 'streamlit:render') return;
+    // Confirm real Streamlit handshake on the first render event received.
+    if (!_apexHandshakeDone) {
+        _apexHandshakeDone = true;
+        _apexBridgeAvailable = true;
+        _setEngineMode('py');
+        var banner = document.getElementById('_apexNoBridgeBanner');
+        if (banner) banner.style.display = 'none';
+    }
     const res = (event.data.args || {}).pyScanResult;
     if (res && res.reqId && _apexPendingReqs[res.reqId]) {
         const { resolve, reject, timer } = _apexPendingReqs[res.reqId];
@@ -330,7 +344,7 @@ function _apexGetDocHeight() {
 }
 
 function _apexSyncFrameHeight() {
-    if (!_apexBridgeAvailable) return;
+    try { if (window.parent === window) return; } catch (_) { return; }
     _apexSendToStreamlit('streamlit:setFrameHeight', { height: _apexGetDocHeight() });
 }
 
@@ -352,13 +366,18 @@ function _apexScheduleHeightSync() {
 }
 
 // Signal component readiness to Streamlit on first load.
+// Always send regardless of _apexBridgeAvailable — this triggers the
+// first streamlit:render reply that confirms the bridge is live.
 document.addEventListener('DOMContentLoaded', function () {
-    if (_apexBridgeAvailable) {
-        _apexSendToStreamlit('streamlit:componentReady', { apiVersion: 1 });
-        _apexScheduleHeightSync();
-        // Reflect the PY-first default in the toggle button UI
-        _setEngineMode('py');
-    }
+    _apexSendToStreamlit('streamlit:componentReady', { apiVersion: 1 });
+    _apexScheduleHeightSync();
+    // If no streamlit:render arrives within 2 s, the bridge is not live.
+    setTimeout(function () {
+        if (!_apexHandshakeDone) {
+            var banner = document.getElementById('_apexNoBridgeBanner');
+            if (banner) banner.style.display = 'block';
+        }
+    }, 2000);
 });
 
 // Re-sync height when DOM changes (log entries / result panels appear).
@@ -389,8 +408,9 @@ function _apexBridgeRequest(action, payload) {
             }
         }, 15000);
         _apexPendingReqs[reqId] = { resolve: resolve, reject: reject, timer: timer };
-        _apexSendToStreamlit('streamlit:componentValue', {
-            value: { action: action, payload: payload, reqId: reqId }
+        _apexSendToStreamlit('streamlit:setComponentValue', {
+            value: { action: action, payload: payload, reqId: reqId },
+            dataType: 'json',
         });
     });
 }
@@ -405,9 +425,9 @@ async function postFinalToBackend(matchName, scoreStr) {
         .catch(e => console.warn('Failed to send /api/final:', e));
 }
 
-// Engine mode: 'py' (default when inside Streamlit) or 'js'
+// Engine mode: starts as 'js'; switches to 'py' after Streamlit handshake.
 // Python is the primary engine; JS remains as automatic fallback.
-let _apexEngineMode = _apexBridgeAvailable ? 'py' : 'js';
+let _apexEngineMode = 'js';
 
 function _setEngineMode(mode) {
     _apexEngineMode = mode;
