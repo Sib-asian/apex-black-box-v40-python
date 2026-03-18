@@ -282,28 +282,74 @@
 <script>
 
 // ════════════════════════════════════════════════════════════════
-//  PYTHON ENGINE API  [backend]
-//  Port is injected by Streamlit at startup (replaces placeholder).
-//  Default JS engine is always used when toggle is OFF or API fails.
+//  PYTHON ENGINE BRIDGE  [Streamlit Component postMessage protocol]
+//  Works on Streamlit Cloud without custom ports or mixed-content.
+//  Falls back to JS engine gracefully if outside Streamlit context.
 // ════════════════════════════════════════════════════════════════
-const _APEX_API_PORT = '__APEX_API_PORT__';  // replaced at runtime by Streamlit
-const _APEX_API_BASE = (_APEX_API_PORT && _APEX_API_PORT !== '__APEX_API_PORT__')
-    ? `http://127.0.0.1:${_APEX_API_PORT}` : null;
+
+// Detect whether we are running inside a Streamlit iframe.
+const _apexBridgeAvailable = (function () {
+    try { return window.parent !== window; } catch (_) { return false; }
+}());
+
+let _apexReqIdCounter = 0;
+const _apexPendingReqs = {};  // reqId -> { resolve, reject, timer }
+
+function _apexSendToStreamlit(type, data) {
+    const msg = Object.assign({}, data, { isStreamlitMessage: true, type: type });
+    window.parent.postMessage(msg, '*');
+}
+
+// Receive Python responses via Streamlit render events.
+window.addEventListener('message', function (event) {
+    if (!event.data || !event.data.isStreamlitMessage) return;
+    if (event.data.type !== 'streamlit:render') return;
+    const res = (event.data.args || {}).pyScanResult;
+    if (res && res.reqId && _apexPendingReqs[res.reqId]) {
+        const { resolve, reject, timer } = _apexPendingReqs[res.reqId];
+        delete _apexPendingReqs[res.reqId];
+        clearTimeout(timer);
+        if (res.ok) { resolve(res.data); } else { reject(new Error(res.error || 'PY engine error')); }
+    }
+});
+
+// Signal component readiness to Streamlit on first load.
+document.addEventListener('DOMContentLoaded', function () {
+    if (_apexBridgeAvailable) {
+        _apexSendToStreamlit('streamlit:componentReady', { apiVersion: 1 });
+        _apexSendToStreamlit('streamlit:setFrameHeight', { height: 980 });
+    }
+});
+
+// Send a scan/final request to the Python backend; returns a Promise.
+function _apexBridgeRequest(action, payload) {
+    return new Promise(function (resolve, reject) {
+        if (!_apexBridgeAvailable) {
+            reject(new Error('Not in Streamlit context'));
+            return;
+        }
+        const reqId = 'r' + (++_apexReqIdCounter) + '_' + Date.now();
+        const timer = setTimeout(function () {
+            if (_apexPendingReqs[reqId]) {
+                delete _apexPendingReqs[reqId];
+                reject(new Error('PY backend timeout'));
+            }
+        }, 15000);
+        _apexPendingReqs[reqId] = { resolve: resolve, reject: reject, timer: timer };
+        _apexSendToStreamlit('streamlit:componentValue', {
+            value: { action: action, payload: payload, reqId: reqId }
+        });
+    });
+}
 
 // ── Helper: send final score to backend for server-side logging ──
 async function postFinalToBackend(matchName, scoreStr) {
-    if (!_APEX_API_BASE) return;
+    if (!_apexBridgeAvailable) return;
     const parts = scoreStr.split('-').map(s => parseInt(s.trim(), 10));
     if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) return;
-    try {
-        await fetch(`${_APEX_API_BASE}/api/final`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ matchName: matchName, hgFT: parts[0], agFT: parts[1] })
-        });
-    } catch (e) {
-        console.warn('Failed to POST /api/final:', e);
-    }
+    // Fire-and-forget: log the final score; ignore response.
+    _apexBridgeRequest('final', { matchName: matchName, hgFT: parts[0], agFT: parts[1] })
+        .catch(e => console.warn('Failed to send /api/final:', e));
 }
 
 // Engine mode: 'js' (default) or 'py'
@@ -325,8 +371,8 @@ function _setEngineMode(mode) {
 }
 
 function _toggleEngine() {
-    if (!_APEX_API_BASE) {
-        alert("Backend Python non disponibile: porta API non configurata.\nRiavvia l'app Streamlit per abilitare il motore Python.");
+    if (!_apexBridgeAvailable) {
+        alert('⚙️ Il motore Python è disponibile solo dentro l\'app Streamlit.\nRiavvia l\'app su Streamlit Cloud per abilitarlo.');
         return;
     }
     _setEngineMode(_apexEngineMode === 'js' ? 'py' : 'js');
@@ -363,7 +409,7 @@ function _buildScanPayload(matchName) {
     };
 }
 
-// ── Call Python API with fallback to JS ───────────────────────────
+// ── Call Python engine via Streamlit bridge (with fallback to JS) ─
 async function _runWithPyEngine(n, db) {
     const payload = _buildScanPayload(n);
     // Add previous scans for trend / stabQ
@@ -374,15 +420,7 @@ async function _runWithPyEngine(n, db) {
             return { ...r, probs: p };
         });
     }
-    const url = `${_APEX_API_BASE}/api/scan`;
-    const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(5000),
-    });
-    if (!resp.ok) throw new Error(`API ${resp.status}`);
-    return await resp.json();
+    return await _apexBridgeRequest('scan', payload);
 }
 
 
@@ -2225,7 +2263,7 @@ function runOracleScanner() {
         setDB(db); renderHistory(n);
     }
 
-    if (_apexEngineMode === 'py' && _APEX_API_BASE) {
+    if (_apexEngineMode === 'py' && _apexBridgeAvailable) {
         // ── Python engine path (async) ─────────────────────────────
         saveCurrentMatch();
         const db = getDB();
