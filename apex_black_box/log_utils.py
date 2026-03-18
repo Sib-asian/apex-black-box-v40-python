@@ -20,7 +20,7 @@ LOG_DIR = Path("data/logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Snapshot minutes — kept in sync between Flask API and Streamlit.
-# FIX 6 in api.py (snap_5, snap_10, snap_88) is now the canonical list.
+# This module is the single source of truth — do not redefine in api.py or streamlit_app.py.
 SNAP_MINUTES = [5, 10, 20, 40, 60, 80, 88]
 SNAP_TAGS = ["snap_5", "snap_10", "snap_20", "snap_40", "snap_60", "snap_80", "snap_88"]
 

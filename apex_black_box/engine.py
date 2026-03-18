@@ -1055,12 +1055,12 @@ def scan(payload: dict) -> dict:
             # Fix 10 (evolutivo): Anti-drift alert — segnala se pOver25 cala
             # costantemente in 3+ scan consecutivi (tendenza a partita chiusa).
             # Usa pO (alias breve) o pOver25 dall'engine storico, entrambi validi.
+            # filtered[0] is the scan closest to current minute (first in list),
+            # filtered[-1] is the oldest — [0]>[1]>[2] means declining over time.
             if len(filtered) >= 3:
-                over25_trend = [
-                    float(h.get("pO", h.get("pOver25", 0)) or 0)
-                    for h in filtered
-                    if float(h.get("pO", h.get("pOver25", 0)) or 0) > 0
-                ]
+                def _get_pover(h: dict) -> float:
+                    return float(h.get("pO", h.get("pOver25", 0)) or 0)
+                over25_trend = [_get_pover(h) for h in filtered if _get_pover(h) > 0]
                 if (len(over25_trend) >= 3
                         and over25_trend[0] > over25_trend[1] > over25_trend[2]):
                     alerts.append({
