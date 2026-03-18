@@ -681,11 +681,9 @@ Brier dettaglio: P1=${brier1.toFixed(3)} PX=${brierX.toFixed(3)} P2=${brier2.toF
 💡 SUGGERIMENTI:
 `; suggestions.forEach(s=>report+=`  • ${s}
 `); }
-    else report+=`
-✅ Nessun bias significativo rilevato — buona calibrazione!
+    else report+=`\n✅ Nessun bias significativo rilevato — buona calibrazione!\n`;
     const _affLabel=n>=20?'SOLIDA ('+n+' partite)':n>=10?'INDICATIVA (accumula ancora)':'INSUFFICIENTE (min 10)';
     report+='\nAffidabilita: '+_affLabel+'\n';
-`;
 
     // Salva calibrazione nel DB
     const calibData={runAt:new Date().toISOString(),n,brierAvg:+brierAvg.toFixed(4),
