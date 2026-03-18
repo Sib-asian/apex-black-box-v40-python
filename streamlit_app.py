@@ -30,6 +30,23 @@ from apex_black_box.log_utils import (
 st.set_page_config(page_title="Apex Black Box v4.0", layout="wide")
 print(f"[Apex] app started engine_version={_ENGINE_VERSION}", file=sys.stderr, flush=True)
 
+
+def _normalize_component_msg(component_value: dict) -> dict:
+    """Normalize a component message to the canonical ``{action, payload, reqId}`` form.
+
+    Streamlit component values may arrive in two shapes depending on how
+    ``Streamlit.setComponentValue`` is called by the frontend:
+
+    * Direct (preferred):  ``{"action": ..., "payload": ..., "reqId": ...}``
+    * Wrapped (legacy):    ``{"value": {"action": ..., "payload": ..., "reqId": ...}}``
+
+    Both forms are handled here so the rest of the app logic stays simple.
+    """
+    if "value" in component_value and isinstance(component_value["value"], dict):
+        return component_value["value"]
+    return component_value
+
+
 # ── Build the Streamlit component once per process ───────────────
 # declare_component requires a directory containing index.html.
 # We copy static/js/V40.html to a temp dir as index.html so the
@@ -68,9 +85,10 @@ component_value = _apex_component(
 )
 
 if component_value and isinstance(component_value, dict):
-    req_id = component_value.get("reqId")
-    action = component_value.get("action")
-    payload = component_value.get("payload") or {}
+    msg = _normalize_component_msg(component_value)
+    req_id = msg.get("reqId")
+    action = msg.get("action")
+    payload = msg.get("payload") or {}
 
     if req_id and req_id != st.session_state.get("_apex_last_req_id"):
         print(
@@ -118,4 +136,5 @@ if component_value and isinstance(component_value, dict):
                 print(f"[Apex] final error: {exc}", file=sys.stderr, flush=True)
                 traceback.print_exc(file=sys.stderr)
             st.session_state["_apex_last_req_id"] = req_id
+            st.rerun()
 
