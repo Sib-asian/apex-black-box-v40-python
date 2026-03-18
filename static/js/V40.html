@@ -943,7 +943,7 @@ function buildResultMatrix(lH, lA, min_) {
 }
 
 function aggregateFromMatrix(matrix, hgNow, agNow) {
-    let p1=0,pX=0,p2=0,pOver=0,pOver25=0,pBTTS=0,pDNB_H=0,pDNB_A=0,pOver15=0;
+    let p1=0,pX=0,p2=0,pOver=0,pOver25=0,pBTTS=0,pDNB_H=0,pDNB_A=0,pOver15=0,pNoMoreGoals=0,pUnder35=0,pOver35=0;
     matrix.forEach(({h,a,p})=>{
         const fh=hgNow+h, fa=agNow+a;
         if      (fh>fa) { p1+=p; pDNB_H+=p; }
@@ -955,12 +955,17 @@ function aggregateFromMatrix(matrix, hgNow, agNow) {
         if ((fh+fa)>2.5) pOver25+=p;
         if ((fh+fa)>1.5) pOver15+=p;
         if (fh>0&&fa>0)  pBTTS+=p;
+        // Exchange markets: NoMoreGoals (0 remaining goals), Under/Over 3.5
+        if (h===0&&a===0)      pNoMoreGoals+=p;
+        if ((fh+fa)<=3)        pUnder35+=p;
+        if ((fh+fa)>=4)        pOver35+=p;
     });
     const dnb=p1+p2;
     return { p1, pX, p2, pOver, pOver25, pOver15, pBTTS,
              p1X: p1+pX, pX2: p2+pX, p12: p1+p2,
              pDNB_H: dnb>0?pDNB_H/dnb:0,
-             pDNB_A: dnb>0?pDNB_A/dnb:0 };
+             pDNB_A: dnb>0?pDNB_A/dnb:0,
+             pNoMoreGoals, pUnder35, pOver35 };
 }
 
 function poissonSample(lambda) {
@@ -1194,6 +1199,10 @@ function generateAdvice(data) {
     const dc1X = data.probs.DC_1X || (data.probs['1']+data.probs['X']);
     const dcX2 = data.probs.DC_X2 || (data.probs['2']+data.probs['X']);
     const dc12 = data.probs.DC_12 || (data.probs['1']+data.probs['2']);
+    // Exchange markets
+    const pUnder35 = data.probs.Under35 || 0;
+    const pOver35  = data.probs.Over35  || 0;
+    const pNoMore  = data.probs.NoMoreGoals || 0;
 
     const markets = [
         { id:'1',  name:'1 — Vittoria Casa',  p:data.probs['1'],    bkKey:'1'      },
@@ -1208,6 +1217,13 @@ function generateAdvice(data) {
             : [{ id:'dc1X', name:'1X (Dbl Chance)', p:dc1X, bkKey:null },
                { id:'dcX2', name:'X2 (Dbl Chance)', p:dcX2, bkKey:null }]),
     ];
+    // Exchange: Under/Over 3.5 always available (filtered in scoring block)
+    markets.push({id:'under35', name:'Under 3.5', p:pUnder35, bkKey:null});
+    markets.push({id:'over35',  name:'Over 3.5',  p:pOver35,  bkKey:null});
+    // No More Goals: operational from 55', conservative conditions verified in scoring block
+    if (min >= 55 && pNoMore > 0.005) {
+        markets.push({id:'nomore', name:'🛡️ Nessun altro gol (0 gol rimanenti)', p:pNoMore, bkKey:null});
+    }
     // Prox Gol: solo se partita ancora aperta (goalDiff<=1)
     const pH_c = data.probs.Next_H_c || 0;
     const pA_c = data.probs.Next_A_c || 0;
@@ -1316,11 +1332,15 @@ function generateAdvice(data) {
                 if(_hg<_ag&&_lastGoal>0&&(_min-_lastGoal)<10) { score+=2; }
                 // Partita bloccata (vix basso): ProxGol meno rilevante
                 if(_vix<25) { score-=1; }
+                // [EXCHANGE] Late-game penalty: solo se Casa è in vantaggio (in gestione)
+                if(_min>=60&&_hg>_ag) { score-=4; reason='penalità late-game: Casa in vantaggio'; }
             }
             if(m.id==='nextA') {
                 if(_rcA>=1) { score-=2; }
                 if(_ag<_hg&&_lastGoal>0&&(_min-_lastGoal)<10) { score+=2; }
                 if(_vix<25) { score-=1; }
+                // [EXCHANGE] Late-game penalty: solo se Trasferta è in vantaggio (in gestione)
+                if(_min>=60&&_ag>_hg) { score-=4; reason='penalità late-game: Trasferta in vantaggio'; }
             }
 
             // ── Regola 8: fine partita (<15' rimasti) ────────────
@@ -1350,6 +1370,51 @@ function generateAdvice(data) {
                 // DC della squadra più numerosa
                 if(m.id==='dc1X'&&_rcA>=1) { score+=1; }
                 if(m.id==='dcX2'&&_rcH>=1) { score+=1; }
+            }
+
+            // ── Regola 12: Under/Over 3.5 (exchange) ─────────────
+            if(m.id==='under35') {
+                // Già 4+ gol: impossibile
+                if((_hg+_ag)>=4) { remove=true; reason='Under 3.5 già superato'; }
+                // Già 3 gol e tarda partita: molto probabile, bonus
+                else if((_hg+_ag)===3&&_min>60) { score+=1; }
+                // Partita frenetica (vix alto, 2+ gol): meno rilevante
+                if(_vix>55&&(_hg+_ag)>=2) { score-=2; }
+                // VIX basso e pochi gol: interessante
+                if(_vix<35&&(_hg+_ag)<=1) { score+=2; }
+                // Tarda partita con pochi gol: bonus
+                if(_min>=60&&(_hg+_ag)<=2) { score+=1; }
+            }
+            if(m.id==='over35') {
+                // Poco tempo e bassa probabilità: irrilevante
+                if(_remMin<=20&&m.p<0.25) { score-=3; }
+                // Alta intensità con 2+ gol: interessante
+                if(_vix>55&&(_hg+_ag)>=2) { score+=2; }
+                // Pochi gol e tarda partita: improbabile
+                if(_min>=65&&(_hg+_ag)<=1) { score-=2; }
+            }
+
+            // ── Regola 13: No More Goals (operativo da 55', conservativo) ─
+            if(m.id==='nomore') {
+                const _sotH=data.raw?.sotH||0, _sotA=data.raw?.sotA||0;
+                const _misH=data.raw?.misH||0, _misA=data.raw?.misA||0;
+                const _daH=data.raw?.daH||0,   _daA=data.raw?.daA||0;
+                const _sotTot=_sotH+_sotA;
+                const _daTot=_daH+_daA;
+                const _totalShots=_sotH+_misH+_sotA+_misA;
+                const _noGoalRecently=_lastGoal===0||(_min-_lastGoal)>=10;
+                // Condizioni operative conservative (exchange: pochi segnali ma buoni)
+                const _canOperate=_vix<=38&&_sotTot<=5&&_daTot<=46
+                    &&(_rcH+_rcA===0)&&_noGoalRecently;
+                if(!_canOperate) {
+                    remove=true; reason='condizioni non conservative per No More Goals';
+                } else {
+                    score+=2;
+                    // Bonus extra: partita avanzata con alta probabilità
+                    if(_min>=70&&m.p>=0.60) { score+=2; }
+                    // Guardrail aggiuntivo: troppi tiri totali
+                    if(_totalShots>14) { score-=2; }
+                }
             }
 
             m._score = score;
@@ -1407,7 +1472,7 @@ function generateAdvice(data) {
     // [FIX V31] Under2.5 e Over1.5 NON vanno in TRAP anche se p>80%
     // Con score 1-1@80' Under2.5=84% → è un pick solido, non un mercato bruciato
     // La logica TRAP vale per 1X2 (più probabile = meno valore), NON per Under/Over bassa soglia
-    const EXCLUDE_FROM_TRAP = new Set(['under25','over15']);
+    const EXCLUDE_FROM_TRAP = new Set(['under25','over15','under35','nomore']);
     const traps = analyzed.filter(m=>m.p>0.80 && !EXCLUDE_FROM_TRAP.has(m.id) && (m.edge===null || m.edge<5));
 
     // [V29 FIX 2] Soglie adattive
@@ -2187,6 +2252,10 @@ function runOracleEngine(n, db) {
     const _pOver15 = shrinkToBase(safeNum(agg.pOver15, 0.5), 0.5, _ss);
     const _pOver   = shrinkToBase(safeNum(agg.pOver,   0.5), 0.5, _ss);
     const _pBTTS   = shrinkToBase(safeNum(pBTTS,       0.5), 0.5, _ss);
+    // Exchange markets: Under/Over 3.5, No More Goals
+    const _pOver35  = shrinkToBase(safeNum(agg.pOver35,      0.5), 0.5, _ss);
+    const _pUnder35 = shrinkToBase(safeNum(agg.pUnder35,     0.5), 0.5, _ss);
+    const _pNoMore  = shrinkToBase(safeNum(agg.pNoMoreGoals, 0.2), 0.2, _ss);
     // Next-goal conditionals: shrink toward 0.50
     const _nHc = shrinkToBase(safeNum(nextH_cond, 0.5), 0.5, _ss);
     const _nAc = shrinkToBase(safeNum(nextA_cond, 0.5), 0.5, _ss);
@@ -2207,7 +2276,8 @@ function runOracleEngine(n, db) {
             DC_1X:_dc1X, DC_X2:_dcX2, DC_12:_dc12,
             Next_H:nextH_abs, Next_A:nextA_abs,
             Next_H_c:_nHc, Next_A_c:_nAc,
-            O_Dyn:_pOver, Over25:_pOver25, BTTS:_pBTTS
+            O_Dyn:_pOver, Over25:_pOver25, BTTS:_pBTTS,
+            Over35:_pOver35, Under35:_pUnder35, NoMoreGoals:_pNoMore
         },
         matrix, htProbs, etProbs, dynOver, vix, confidence, alerts, min,
         confIntervals:(()=>{const unc=Math.max(0.01,(1-confidence/100)*0.45);const ci=(p)=>({lo:+(Math.max(0.01,p-unc*Math.sqrt(p*(1-p))*2)).toFixed(3),hi:+(Math.min(0.99,p+unc*Math.sqrt(p*(1-p))*2)).toFixed(3)});return{p1:ci(_p1),pX:ci(_pX),p2:ci(_p2),pO:ci(_pOver)};})(),
