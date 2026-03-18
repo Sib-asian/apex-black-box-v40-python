@@ -4,8 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex Black Box - V40</title>
-    <!-- Official Streamlit Component library – required for proper registration on Streamlit Cloud -->
-    <script src="https://unpkg.com/streamlit-component-lib/dist/index.js"></script>
+
     <style>
         :root {
             --ferrari-red:#ff003c; --dark-bg:#030305; --panel-bg:#0a0a0f; --panel-border:#1f1f2e;
@@ -288,24 +287,65 @@
 <script>
 
 // ════════════════════════════════════════════════════════════════
-//  PYTHON ENGINE BRIDGE  [Official streamlit-component-lib protocol]
-//  Uses Streamlit.setComponentReady / setComponentValue / setFrameHeight
-//  so the component is properly registered on Streamlit Cloud.
-//  Falls back to JS engine gracefully if outside Streamlit context.
+//  PYTHON ENGINE BRIDGE  [Native postMessage protocol — no CDN]
+//  Implements the Streamlit component wire protocol directly so
+//  the component works on Streamlit Cloud without any external
+//  script tags (which fail inside sandboxed iframes).
 // ════════════════════════════════════════════════════════════════
 
-// Bridge availability: starts false; becomes true only after a real
-// RENDER_EVENT handshake is received from the Streamlit runtime.
 let _apexBridgeAvailable = false;
 let _apexHandshakeDone = false;
 
 let _apexReqIdCounter = 0;
 const _apexPendingReqs = {};  // reqId -> { resolve, reject, timer }
 
-// Receive Python responses via the official Streamlit RENDER_EVENT.
-if (window.Streamlit) {
-    Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, function (event) {
-        // Confirm real Streamlit handshake on the first render event received.
+// ── Streamlit wire-protocol helpers ──────────────────────────────
+// '*' target origin is required because the Streamlit parent's origin
+// is not known to the sandboxed iframe at component load time.
+// This matches the behaviour of the official streamlit-component-lib.
+function _stPost(msg) {
+    try { window.parent.postMessage(msg, '*'); } catch (e) { /* cross-origin guard */ }
+}
+
+function _stSetReady() {
+    _stPost({ type: 'streamlit:componentReady', apiVersion: 1 });
+}
+
+function _stSetValue(value) {
+    _stPost({ type: 'streamlit:setComponentValue', value: value });
+}
+
+function _stSetHeight(h) {
+    _stPost({ type: 'streamlit:setFrameHeight', height: h });
+}
+
+// ── Dynamic iframe height sync ────────────────────────────────────
+// MIN_FRAME_HEIGHT: minimum iframe height in pixels; prevents Streamlit
+// from collapsing the component before the full UI has been painted.
+var MIN_FRAME_HEIGHT = 800;
+var _apexHeightSyncTimer = null;
+function _apexScheduleHeightSync() {
+    clearTimeout(_apexHeightSyncTimer);
+    _apexHeightSyncTimer = setTimeout(function () {
+        var h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, MIN_FRAME_HEIGHT);
+        _stSetHeight(h);
+    }, 100);
+}
+
+function _apexDebouncedHeightSync() {
+    _apexScheduleHeightSync();
+}
+
+// ── Receive messages from Streamlit (RENDER_EVENT equivalent) ────
+window.addEventListener('message', function (ev) {
+    // Accept messages from parent only; ignore if from same window.
+    if (ev.source === window) return;
+    var data = ev.data;
+    if (!data || typeof data !== 'object') return;
+
+    // Streamlit sends type "streamlit:render" with component args.
+    if (data.type === 'streamlit:render') {
+        // First render = handshake confirmed.
         if (!_apexHandshakeDone) {
             _apexHandshakeDone = true;
             _apexBridgeAvailable = true;
@@ -313,62 +353,26 @@ if (window.Streamlit) {
             var banner = document.getElementById('_apexNoBridgeBanner');
             if (banner) banner.style.display = 'none';
         }
-        const res = (event.detail.args || {}).pyScanResult;
+
+        // Resolve any pending request whose reqId matches.
+        var res = ((data.args || {})).pyScanResult;
         if (res && res.reqId && _apexPendingReqs[res.reqId]) {
-            const { resolve, reject, timer } = _apexPendingReqs[res.reqId];
+            var cb = _apexPendingReqs[res.reqId];
             delete _apexPendingReqs[res.reqId];
-            clearTimeout(timer);
-            if (res.ok) { resolve(res.data); } else { reject(new Error(res.error || 'PY engine error')); }
+            clearTimeout(cb.timer);
+            if (res.ok) { cb.resolve(res.data); }
+            else { cb.reject(new Error(res.error || 'Python engine error')); }
         }
-    });
-}
 
-// ── Dynamic iframe height sync (fixes iPhone Safari scroll truncation) ───────
-// Small buffer added on top of the measured document height so that Streamlit
-// never clips the last few pixels of content or the safe-area padding.
-var _APEX_HEIGHT_PAD = 24;
+        _apexScheduleHeightSync();
+    }
+});
 
-function _apexGetDocHeight() {
-    var body = document.body;
-    var docEl = document.documentElement;
-    return Math.max(
-        body   ? body.scrollHeight   : 0,
-        body   ? body.offsetHeight   : 0,
-        docEl  ? docEl.scrollHeight  : 0,
-        docEl  ? docEl.offsetHeight  : 0
-    ) + _APEX_HEIGHT_PAD;
-}
-
-function _apexSyncFrameHeight() {
-    try { if (window.parent === window) return; } catch (_) { return; }
-    if (window.Streamlit) { Streamlit.setFrameHeight(_apexGetDocHeight()); }
-}
-
-// Debounce handle for MutationObserver-triggered syncs.
-var _apexHeightDebounceTimer = null;
-function _apexDebouncedHeightSync() {
-    clearTimeout(_apexHeightDebounceTimer);
-    _apexHeightDebounceTimer = setTimeout(_apexSyncFrameHeight, 100);
-}
-
-// On explicit events (DOMContentLoaded, resize, orientationchange) we schedule
-// multiple retries because iOS Safari stabilises layout across several ticks:
-// immediate → after microtasks flush (50 ms) → after fonts/images (250 ms) → final (800 ms).
-function _apexScheduleHeightSync() {
-    _apexSyncFrameHeight();
-    setTimeout(_apexSyncFrameHeight, 50);
-    setTimeout(_apexSyncFrameHeight, 250);
-    setTimeout(_apexSyncFrameHeight, 800);
-}
-
-// Signal component readiness to Streamlit on first load using the official
-// streamlit-component-lib API so the component is properly registered.
-// Always call regardless of _apexBridgeAvailable — this triggers the
-// first RENDER_EVENT reply that confirms the bridge is live.
+// ── Bootstrap: signal ready as soon as DOM is loaded ─────────────
 document.addEventListener('DOMContentLoaded', function () {
-    if (window.Streamlit) { Streamlit.setComponentReady(); }
+    _stSetReady();
     _apexScheduleHeightSync();
-    // If no RENDER_EVENT arrives within 2 s, the bridge is not live.
+    // If no render event arrives within 2 s, show the no-bridge banner.
     setTimeout(function () {
         if (!_apexHandshakeDone) {
             var banner = document.getElementById('_apexNoBridgeBanner');
@@ -377,13 +381,12 @@ document.addEventListener('DOMContentLoaded', function () {
     }, 2000);
 });
 
-// Re-sync height when DOM changes (log entries / result panels appear).
-// Scoped to .container to avoid reacting to unrelated document-level changes.
+// ── Re-sync height on DOM mutations ─────────────────────────────
 var _apexHeightObs = new MutationObserver(function () { _apexDebouncedHeightSync(); });
 var _apexContainer = document.querySelector('.container');
 _apexHeightObs.observe(_apexContainer || document.body, { childList: true, subtree: true });
 
-// Re-sync on viewport changes: rotate, resize, iOS keyboard, tab switch.
+// Re-sync on viewport changes
 window.addEventListener('resize', _apexScheduleHeightSync);
 window.addEventListener('orientationchange', _apexScheduleHeightSync);
 document.addEventListener('visibilitychange', function () {
@@ -405,7 +408,7 @@ function _apexBridgeRequest(action, payload) {
             }
         }, 15000);
         _apexPendingReqs[reqId] = { resolve: resolve, reject: reject, timer: timer };
-        Streamlit.setComponentValue({ action: action, payload: payload, reqId: reqId });
+        _stSetValue({ action: action, payload: payload, reqId: reqId });
     });
 }
 
