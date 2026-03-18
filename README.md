@@ -34,9 +34,12 @@ Push to your GitHub repository and connect it to
 [Streamlit Community Cloud](https://streamlit.io/cloud).
 
 **No custom port configuration is required.**
-The Python Oracle Engine communicates with the frontend via the Streamlit
-Component bidirectional protocol (postMessage), so it works out-of-the-box
-on `https://<your-app>.streamlit.app` without any additional server setup.
+The Python Oracle Engine communicates with the frontend via the official
+[`streamlit-component-lib`](https://www.npmjs.com/package/streamlit-component-lib)
+protocol, loaded from the unpkg CDN. This ensures the component is properly
+registered on Streamlit Cloud and eliminates the
+`Received component message for unregistered ComponentInstance!` error that
+occurred with the previous raw postMessage approach.
 
 > **Legacy note:** `main.py` is kept as a backward-compatible entry point.
 > Streamlit Cloud deployments that already point to `main.py` will continue
@@ -81,9 +84,9 @@ static/js/V40.html  <- full UI + JS Oracle Engine + Streamlit Component bridge
 
 1. The frontend (`static/js/V40.html`) is served as a **Streamlit Component** via
    `streamlit.components.v1.declare_component`.
-2. When the user activates **Engine: PY** and runs a scan, the JS sends the payload
-   to the Streamlit Python backend via `window.parent.postMessage` (Streamlit
-   Component value protocol) — **no custom port or HTTP call needed**.
+2. When the user activates **Engine: PY** and runs a scan, the JS calls
+   `Streamlit.setComponentValue(payload)` via the official `streamlit-component-lib`
+   API — **no custom port or HTTP call needed**.
 3. The Python backend calls `apex_black_box.engine.scan(payload)`, serialises the
    result as JSON, and passes it back to the component as a render prop.
 4. The JS receives the result and renders it exactly as it would for the JS engine.
@@ -115,6 +118,11 @@ POST `/api/scan` — payload fields (all optional, default 0):
   The Flask server is **not** used by the browser on Streamlit Cloud.
 - **PY vs JS differences**: minor floating-point deltas are normal; JS is the reference.
 - **No logs in Streamlit Cloud "Manage app → Logs"**: see the dedicated section below.
+- **`Received component message for unregistered ComponentInstance!`**: this error
+  occurred with the previous raw `postMessage` bridge. The frontend now uses the
+  official `streamlit-component-lib` (`Streamlit.setComponentReady()`,
+  `Streamlit.setComponentValue()`, `Streamlit.setFrameHeight()`) and this error
+  should no longer appear.
 
 ### Verifying the Streamlit component bridge (Manage app → Logs)
 

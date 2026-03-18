@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apex Black Box - V40</title>
+    <!-- Official Streamlit Component library – required for proper registration on Streamlit Cloud -->
+    <script src="https://unpkg.com/streamlit-component-lib/dist/index.js"></script>
     <style>
         :root {
             --ferrari-red:#ff003c; --dark-bg:#030305; --panel-bg:#0a0a0f; --panel-border:#1f1f2e;
@@ -286,46 +288,40 @@
 <script>
 
 // ════════════════════════════════════════════════════════════════
-//  PYTHON ENGINE BRIDGE  [Streamlit Component postMessage protocol]
-//  Works on Streamlit Cloud without custom ports or mixed-content.
+//  PYTHON ENGINE BRIDGE  [Official streamlit-component-lib protocol]
+//  Uses Streamlit.setComponentReady / setComponentValue / setFrameHeight
+//  so the component is properly registered on Streamlit Cloud.
 //  Falls back to JS engine gracefully if outside Streamlit context.
 // ════════════════════════════════════════════════════════════════
 
 // Bridge availability: starts false; becomes true only after a real
-// streamlit:render handshake is received from the Streamlit runtime.
-// (window.parent !== window is true for ANY iframe, not just Streamlit.)
+// RENDER_EVENT handshake is received from the Streamlit runtime.
 let _apexBridgeAvailable = false;
 let _apexHandshakeDone = false;
 
 let _apexReqIdCounter = 0;
 const _apexPendingReqs = {};  // reqId -> { resolve, reject, timer }
 
-function _apexSendToStreamlit(type, data) {
-    const msg = Object.assign({}, data, { isStreamlitMessage: true, type: type });
-    try { window.parent.postMessage(msg, '*'); } catch (_) {}
+// Receive Python responses via the official Streamlit RENDER_EVENT.
+if (window.Streamlit) {
+    Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, function (event) {
+        // Confirm real Streamlit handshake on the first render event received.
+        if (!_apexHandshakeDone) {
+            _apexHandshakeDone = true;
+            _apexBridgeAvailable = true;
+            _setEngineMode('py');
+            var banner = document.getElementById('_apexNoBridgeBanner');
+            if (banner) banner.style.display = 'none';
+        }
+        const res = (event.detail.args || {}).pyScanResult;
+        if (res && res.reqId && _apexPendingReqs[res.reqId]) {
+            const { resolve, reject, timer } = _apexPendingReqs[res.reqId];
+            delete _apexPendingReqs[res.reqId];
+            clearTimeout(timer);
+            if (res.ok) { resolve(res.data); } else { reject(new Error(res.error || 'PY engine error')); }
+        }
+    });
 }
-
-// Receive Python responses via Streamlit render events.
-// NOTE: Streamlit does NOT add isStreamlitMessage to its outbound messages;
-// filter only on the type field.
-window.addEventListener('message', function (event) {
-    if (!event.data || event.data.type !== 'streamlit:render') return;
-    // Confirm real Streamlit handshake on the first render event received.
-    if (!_apexHandshakeDone) {
-        _apexHandshakeDone = true;
-        _apexBridgeAvailable = true;
-        _setEngineMode('py');
-        var banner = document.getElementById('_apexNoBridgeBanner');
-        if (banner) banner.style.display = 'none';
-    }
-    const res = (event.data.args || {}).pyScanResult;
-    if (res && res.reqId && _apexPendingReqs[res.reqId]) {
-        const { resolve, reject, timer } = _apexPendingReqs[res.reqId];
-        delete _apexPendingReqs[res.reqId];
-        clearTimeout(timer);
-        if (res.ok) { resolve(res.data); } else { reject(new Error(res.error || 'PY engine error')); }
-    }
-});
 
 // ── Dynamic iframe height sync (fixes iPhone Safari scroll truncation) ───────
 // Small buffer added on top of the measured document height so that Streamlit
@@ -345,7 +341,7 @@ function _apexGetDocHeight() {
 
 function _apexSyncFrameHeight() {
     try { if (window.parent === window) return; } catch (_) { return; }
-    _apexSendToStreamlit('streamlit:setFrameHeight', { height: _apexGetDocHeight() });
+    if (window.Streamlit) { Streamlit.setFrameHeight(_apexGetDocHeight()); }
 }
 
 // Debounce handle for MutationObserver-triggered syncs.
@@ -365,13 +361,14 @@ function _apexScheduleHeightSync() {
     setTimeout(_apexSyncFrameHeight, 800);
 }
 
-// Signal component readiness to Streamlit on first load.
-// Always send regardless of _apexBridgeAvailable — this triggers the
-// first streamlit:render reply that confirms the bridge is live.
+// Signal component readiness to Streamlit on first load using the official
+// streamlit-component-lib API so the component is properly registered.
+// Always call regardless of _apexBridgeAvailable — this triggers the
+// first RENDER_EVENT reply that confirms the bridge is live.
 document.addEventListener('DOMContentLoaded', function () {
-    _apexSendToStreamlit('streamlit:componentReady', { apiVersion: 1 });
+    if (window.Streamlit) { Streamlit.setComponentReady(); }
     _apexScheduleHeightSync();
-    // If no streamlit:render arrives within 2 s, the bridge is not live.
+    // If no RENDER_EVENT arrives within 2 s, the bridge is not live.
     setTimeout(function () {
         if (!_apexHandshakeDone) {
             var banner = document.getElementById('_apexNoBridgeBanner');
@@ -408,10 +405,7 @@ function _apexBridgeRequest(action, payload) {
             }
         }, 15000);
         _apexPendingReqs[reqId] = { resolve: resolve, reject: reject, timer: timer };
-        _apexSendToStreamlit('streamlit:setComponentValue', {
-            value: { action: action, payload: payload, reqId: reqId },
-            dataType: 'json',
-        });
+        Streamlit.setComponentValue({ action: action, payload: payload, reqId: reqId });
     });
 }
 
