@@ -112,6 +112,48 @@ def _supabase_insert_async(match_id: str, obj: dict) -> None:
     threading.Thread(target=_do, daemon=True).start()
 
 
+def build_match_log_entry(
+    match_id: str,
+    match_name: str,
+    payload: dict,
+    engine_version: str = ENGINE_VERSION,
+) -> dict:
+    """Build a FINAL match-log entry dict suitable for insertion into Supabase.
+
+    Returns a plain dict with all required fields. The ``payload`` argument
+    is sanitized via :func:`sanitize_payload` before inclusion so that only
+    the whitelisted fields are persisted.
+
+    This function has no side-effects and is safe to unit-test in isolation.
+    """
+    return {
+        "type": "final",
+        "match_id": match_id,
+        "matchName": match_name,
+        "engine_version": engine_version,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "hg_ft": int(payload.get("hgFT", 0)),
+        "ag_ft": int(payload.get("agFT", 0)),
+        "payload": sanitize_payload(payload),
+    }
+
+
+def insert_match_log(match_id: str, entry: dict) -> None:
+    """Persist a match-log entry to the JSONL file and Supabase.
+
+    - Appends *entry* to ``data/logs/<match_id>.jsonl``.
+    - Queues an async insert to Supabase ``public.match_logs``.
+    - Never raises: all exceptions are caught and printed to stderr.
+
+    This is a thin, named wrapper around :func:`append_jsonl` that makes the
+    Supabase persistence path explicit and easy to mock in unit tests.
+    """
+    try:
+        append_jsonl(match_id, entry)
+    except Exception as exc:
+        print(f"[log_utils] insert_match_log error for match {match_id}: {exc}", file=sys.stderr)
+
+
 # One lock per file path (keyed by match_id) to serialize JSONL appends.
 _file_locks: dict[str, threading.Lock] = {}
 _file_locks_lock = threading.Lock()
