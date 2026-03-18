@@ -9,10 +9,26 @@ static/js/V40.html (V40 with V40-Shrink anti-overconfidence patch).
 """
 
 from __future__ import annotations
+import logging
 import math
 import random
 import threading
 from typing import Any
+
+_log = logging.getLogger(__name__)
+
+# Lazy import to avoid circular dependency; resolved at runtime.
+# verdict.generate_verdict() is called at the end of scan() to attach the
+# Python-computed verdict to the result dict.
+_verdict_module = None
+
+
+def _get_verdict_module():
+    global _verdict_module
+    if _verdict_module is None:
+        from . import verdict as _v
+        _verdict_module = _v
+    return _verdict_module
 
 # ─────────────────────────────────────────────────────────────────
 #  CONSTANTS
@@ -1175,7 +1191,11 @@ def scan(payload: dict) -> dict:
                 pass
 
     # ── Result ────────────────────────────────────────────────────
-    return {
+    # NoMoreGoals = P(0 additional goals) = 1 - P(at least 1 more goal)
+    # p_over is already shrunk, so this is consistent with the matrix model.
+    p_no_more = clamp01(1.0 - p_over)
+
+    _result = {
         "probs": {
             "1": p1, "X": px, "2": p2,
             "DNB_H": dnb_h, "DNB_A": dnb_a,
@@ -1186,6 +1206,7 @@ def scan(payload: dict) -> dict:
             "Next_H_c": n_hc, "Next_A_c": n_ac,
             "O_Dyn": p_over, "Over25": p_over25, "BTTS": p_btts,
             "Over35": p_over35,
+            "NoMoreGoals": p_no_more,
         },
         "matrix": matrix,
         "htProbs": ht_probs,
@@ -1246,9 +1267,25 @@ def scan(payload: dict) -> dict:
             "sotH": sot_h, "sotA": sot_a, "misH": mis_h, "misA": mis_a,
             "corH": cor_h, "corA": cor_a, "daH": da_h, "daA": da_a,
             "possH": poss_h, "possA": poss_a, "lastGoal": last_goal,
+            "rcH": int(rc_h), "rcA": int(rc_a),
             "xgObsH": round(xg_obs_pure_h, 3), "xgObsA": round(xg_obs_pure_a, 3),
             "xgRateH": round(xg_rate_h, 6), "xgRateA": round(xg_rate_a, 6),
             "xgQualH": round(xg_obs_pure_h, 2), "xgQualA": round(xg_obs_pure_a, 2),
             "halfPeriod": "PT" if minute <= 45 else "ST",
         },
     }
+
+    # ── Compute verdict via Python verdict engine ─────────────────
+    # Done after _result is built so generate_verdict() has access to all
+    # computed probs, metrics, and context fields.  Any exception is caught
+    # gracefully so a verdict failure never breaks the main scan result.
+    try:
+        _vm = _get_verdict_module()
+        _bookie_odds = payload.get("bookOdds") or payload.get("bookieOdds") or {}
+        _kelly_frac = float(payload.get("kellyFrac", 0.25) or 0.25)
+        _result["verdict"] = _vm.generate_verdict(_result, _bookie_odds, _kelly_frac)
+    except Exception:
+        _log.warning("verdict.generate_verdict() failed; frontend will fall back to JS", exc_info=True)
+        pass  # verdict failure is non-fatal; frontend falls back to JS generateAdvice()
+
+    return _result

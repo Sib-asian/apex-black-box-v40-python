@@ -356,6 +356,8 @@ document.addEventListener('DOMContentLoaded', function () {
     if (_apexBridgeAvailable) {
         _apexSendToStreamlit('streamlit:componentReady', { apiVersion: 1 });
         _apexScheduleHeightSync();
+        // Reflect the PY-first default in the toggle button UI
+        _setEngineMode('py');
     }
 });
 
@@ -403,8 +405,9 @@ async function postFinalToBackend(matchName, scoreStr) {
         .catch(e => console.warn('Failed to send /api/final:', e));
 }
 
-// Engine mode: 'js' (default) or 'py'
-let _apexEngineMode = 'js';
+// Engine mode: 'py' (default when inside Streamlit) or 'js'
+// Python is the primary engine; JS remains as automatic fallback.
+let _apexEngineMode = _apexBridgeAvailable ? 'py' : 'js';
 
 function _setEngineMode(mode) {
     _apexEngineMode = mode;
@@ -444,6 +447,11 @@ function _buildScanPayload(matchName) {
         if (v===''||v==='-') { const ph=el.placeholder.replace(',','.'); const n=parseFloat(ph); return isNaN(n)?0:n; }
         const n=parseFloat(v); return isNaN(n)?0:n;
     };
+    const gf = (id) => { const el=document.getElementById(id); if(!el||!el.value.trim()) return null; const n=parseFloat(el.value.replace(',','.')); return isNaN(n)||n<=1?null:n; };
+    // Collect bookie odds — sent to Python engine for edge calculation
+    const bookOdds = {};
+    const _bkMap = {bk1:'1', bkX:'X', bk2:'2', bkO:'O_Dyn', bkB:'BTTS', bkO15:'O15', bkU25:'U25', bkNH:'Next_H_c'};
+    for (const [elId, mkt] of Object.entries(_bkMap)) { const v=gf(elId); if(v!==null) bookOdds[mkt]=v; }
     return {
         matchName: matchName || '',
         min:       gn('lMin'), rec:      gn('lRec'),
@@ -457,6 +465,8 @@ function _buildScanPayload(matchName) {
         tO: gn('tO', true) || (gn('tC', true) || 2.5),
         isKnockout: document.getElementById('isKnockout')?.checked || false,
         possH: gn('possH'), possA: gn('possA'),
+        bookOdds: Object.keys(bookOdds).length > 0 ? bookOdds : undefined,
+        kellyFrac: parseFloat(document.getElementById('kellyFrac')?.value)||0.25,
     };
 }
 
@@ -1507,7 +1517,10 @@ function generateAdvice(data) {
 }
 
 function renderAdvice(data) {
-    const adv = generateAdvice(data);
+    // Use Python-computed verdict if available (Python engine is the primary engine).
+    // Fall back to JS generateAdvice() only when data.verdict is absent (JS engine
+    // mode or Python verdict computation failed).
+    const adv = data.verdict || generateAdvice(data);
     const hasAnyBookie = adv.all.some(m=>m.bOdd!==null);
     let html = `<div class="verdict-box"><div class="verdict-title">🎯 Oracle Verdict${hasAnyBookie?' — Edge Mode 📊':' — Fair Mode'}</div>`;
 
