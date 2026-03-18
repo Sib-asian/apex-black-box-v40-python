@@ -8,6 +8,8 @@ metrics for the Python Oracle Engine scans:
 
   • Brier score  (per market, per snapshot tag, overall)
   • ECE-like bucket table (10 bins) for key binary markets
+  • RPS (Ranked Probability Score) for 1X2
+  • LogScore for 1X2 and binary markets
 
 No external dependencies – pure Python 3.9+.
 
@@ -39,12 +41,15 @@ def _safe(v: Any, fallback: float = 0.0) -> float:
 
 def _labels_from_ft(hg: int, ag: int) -> dict[str, float]:
     """Compute binary outcome labels from final score."""
+    total = hg + ag
     return {
         "1":      1.0 if hg > ag  else 0.0,
         "X":      1.0 if hg == ag else 0.0,
         "2":      1.0 if hg < ag  else 0.0,
-        "over15": 1.0 if hg + ag >= 2 else 0.0,
-        "over25": 1.0 if hg + ag >= 3 else 0.0,
+        # M1: consistent lowercase keys used internally; _probs_from_scan normalises engine keys
+        "over15": 1.0 if total >= 2 else 0.0,
+        "over25": 1.0 if total >= 3 else 0.0,
+        "over35": 1.0 if total >= 4 else 0.0,
         "btts":   1.0 if hg > 0 and ag > 0 else 0.0,
     }
 
@@ -57,6 +62,36 @@ def _brier_1x2(p1: float, px: float, p2: float,
                y1: float, yx: float, y2: float) -> float:
     """Standard multi-class Brier score (mean of squared errors)."""
     return ((p1 - y1) ** 2 + (px - yx) ** 2 + (p2 - y2) ** 2) / 3.0
+
+
+def _rps_1x2(p1: float, px: float, p2: float,
+             y1: float, yx: float, y2: float) -> float:
+    """M16: Ranked Probability Score for 1X2 — lower is better (0 = perfect).
+
+    RPS = 1/(K-1) * sum_k (CDF_forecast_k - CDF_outcome_k)^2
+    Ordering: H < D < A (ascending outcome severity).
+    """
+    cdf_p = [p1, p1 + px]          # P(H), P(H or D)
+    cdf_y = [y1, y1 + yx]          # I(H), I(H or D)
+    return sum((cdf_p[i] - cdf_y[i]) ** 2 for i in range(2)) / 2.0
+
+
+def _log_score_binary(p: float, y: float, eps: float = 1e-9) -> float:
+    """M16: Log score for a binary outcome — 0 is the maximum (perfect prediction);
+    more negative values indicate worse predictions.
+    """
+    p_clipped = max(eps, min(1.0 - eps, p))
+    return y * math.log(p_clipped) + (1.0 - y) * math.log(1.0 - p_clipped)
+
+
+def _log_score_1x2(p1: float, px: float, p2: float,
+                   y1: float, yx: float, y2: float, eps: float = 1e-9) -> float:
+    """M16: Log score for 1X2 — 0 is the maximum (perfect prediction);
+    more negative values indicate worse predictions.
+    """
+    probs = [max(eps, p1), max(eps, px), max(eps, p2)]
+    labels = [y1, yx, y2]
+    return sum(labels[i] * math.log(probs[i]) for i in range(3))
 
 
 # ── ECE bucket table ─────────────────────────────────────────────
@@ -145,7 +180,8 @@ def pair_scans_with_final(
 
 # ── metrics accumulation ─────────────────────────────────────────
 
-BINARY_MARKETS = ["over25", "over15", "btts"]
+# M1: robust key list covers all engine variants (case-insensitive approach)
+BINARY_MARKETS = ["over25", "over15", "over35", "btts"]
 ALL_TAGS = ["snap_20", "snap_40", "snap_60", "snap_80", "goal_event", "red_event"]
 
 
@@ -161,18 +197,26 @@ def _probs_from_scan(scan: dict) -> dict[str, float | None]:
         "2":      _safe(probs.get("2"),  0.333) if "2"  in probs else None,
         "over25": None,
         "over15": None,
+        "over35": None,
         "btts":   None,
     }
 
-    # over25 / over15 / btts from probs dict (keys vary by engine version)
-    for k in ("over25", "Over25", "o25"):
+    # M1: over25 — try all known key variants (case-insensitive robust mapping)
+    for k in ("over25", "Over25", "o25", "OVER25"):
         if k in probs:
             result["over25"] = _safe(probs[k])
             break
-    for k in ("over15", "Over15", "o15"):
+    # M1: over15 — try all known key variants
+    for k in ("over15", "Over15", "o15", "OVER15"):
         if k in probs:
             result["over15"] = _safe(probs[k])
             break
+    # over35 (new market)
+    for k in ("over35", "Over35", "o35", "OVER35"):
+        if k in probs:
+            result["over35"] = _safe(probs[k])
+            break
+    # btts
     for k in ("btts", "BTTS"):
         if k in probs:
             result["btts"] = _safe(probs[k])
@@ -185,6 +229,10 @@ class MetricsAccumulator:
     def __init__(self) -> None:
         # brier[tag][market] -> list of squared errors
         self.brier: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+        # M16: rps[tag] -> list of RPS values
+        self.rps: dict[str, list[float]] = defaultdict(list)
+        # M16: logscore[tag][market] -> list of log-score values
+        self.logscore: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
         # bucket tables[market]
         self.buckets: dict[str, BucketTable] = {m: BucketTable() for m in BINARY_MARKETS}
 
@@ -195,6 +243,14 @@ class MetricsAccumulator:
             bs = _brier_1x2(p1, px, p2, labels["1"], labels["X"], labels["2"])  # type: ignore[arg-type]
             self.brier[tag]["1x2"].append(bs)
             self.brier["_all"]["1x2"].append(bs)
+            # M16: RPS for 1X2
+            rps = _rps_1x2(p1, px, p2, labels["1"], labels["X"], labels["2"])  # type: ignore[arg-type]
+            self.rps[tag].append(rps)
+            self.rps["_all"].append(rps)
+            # M16: LogScore for 1X2
+            ls = _log_score_1x2(p1, px, p2, labels["1"], labels["X"], labels["2"])  # type: ignore[arg-type]
+            self.logscore[tag]["1x2"].append(ls)
+            self.logscore["_all"]["1x2"].append(ls)
 
         # Binary markets
         for market in BINARY_MARKETS:
@@ -206,6 +262,10 @@ class MetricsAccumulator:
             self.brier[tag][market].append(bs)
             self.brier["_all"][market].append(bs)
             self.buckets[market].add(p, y)
+            # M16: LogScore for binary markets
+            ls_bin = _log_score_binary(p, y)
+            self.logscore[tag][market].append(ls_bin)
+            self.logscore["_all"][market].append(ls_bin)
 
     def print_summary(self) -> None:
         tags_order = ["_all"] + ALL_TAGS
@@ -215,6 +275,8 @@ class MetricsAccumulator:
         print("  APEX BLACK BOX – EVALUATION SUMMARY")
         print("═" * 70)
 
+        # Brier scores table
+        print("\n  [Brier Scores — lower = better]")
         header = f"  {'Tag':<14}" + "".join(f"  {m:>10}" for m in markets)
         print(header)
         print("  " + "-" * 66)
@@ -233,7 +295,35 @@ class MetricsAccumulator:
             row += f"   n={n}"
             print(row)
 
-        print("\n  (Values are mean Brier scores; lower = better; 0 = perfect)")
+        print("\n  (Brier: lower = better; 0 = perfect)")
+
+        # M16: RPS table
+        print("\n  [RPS — Ranked Probability Score 1X2 — lower = better]")
+        print(f"  {'Tag':<14}  {'RPS':>10}  {'n':>6}")
+        print("  " + "-" * 35)
+        for tag in tags_order:
+            vals = self.rps.get(tag, [])
+            if vals:
+                print(f"  {tag:<14}  {sum(vals)/len(vals):>10.4f}  {len(vals):>6}")
+
+        # M16: LogScore table
+        print("\n  [LogScore — higher = better; 0 = perfect]")
+        header2 = f"  {'Tag':<14}" + "".join(f"  {m:>10}" for m in markets)
+        print(header2)
+        print("  " + "-" * 66)
+        for tag in tags_order:
+            if tag not in self.logscore:
+                continue
+            row = f"  {tag:<14}"
+            for m in markets:
+                vals = self.logscore[tag].get(m, [])
+                if vals:
+                    row += f"  {sum(vals)/len(vals):>10.4f}"
+                else:
+                    row += f"  {'—':>10}"
+            n = max((len(v) for v in self.logscore[tag].values()), default=0)
+            row += f"   n={n}"
+            print(row)
 
         # ECE bucket tables for binary markets
         for market in BINARY_MARKETS:

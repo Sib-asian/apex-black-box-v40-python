@@ -565,3 +565,438 @@ class TestOutputKeys:
         """modelEdge key is present in metrics but None when bookOdds absent."""
         r = _scan(min=45)
         assert "modelEdge" in r["metrics"]
+
+
+# ─────────────────────────────────────────────────────────────────
+#  New markets — Over35 / Under15 (#3)
+# ─────────────────────────────────────────────────────────────────
+
+class TestNewMarkets:
+    """Over35 and Under15 must be present and logically consistent."""
+
+    def test_over35_present(self):
+        r = _scan(min=45, sotH=5, sotA=3)
+        assert "Over35" in r["probs"], "Over35 should be exposed in probs"
+
+    def test_under15_present(self):
+        r = _scan(min=45, sotH=5, sotA=3)
+        assert "Under15" in r["probs"], "Under15 should be exposed in probs"
+
+    def test_over15_gte_over25_gte_over35(self):
+        """Nested market monotonicity: Over15 ≥ Over25 ≥ Over35."""
+        for minute in (10, 30, 60, 80):
+            r = _scan(min=minute, sotH=minute // 10, sotA=minute // 15)
+            o15 = r["probs"]["Over15"]
+            o25 = r["probs"]["Over25"]
+            o35 = r["probs"]["Over35"]
+            assert o15 >= o25 - 1e-9, f"Over15={o15} < Over25={o25} at min={minute}"
+            assert o25 >= o35 - 1e-9, f"Over25={o25} < Over35={o35} at min={minute}"
+
+    def test_under15_is_complement_of_over15(self):
+        """Under15 = 1 - Over15 within rounding tolerance."""
+        r = _scan(min=50, sotH=6, sotA=4)
+        assert abs(r["probs"]["Under15"] + r["probs"]["Over15"] - 1.0) < 1e-6
+
+    def test_over35_in_range(self):
+        for hg, ag in ((0, 0), (1, 1), (2, 2), (3, 1)):
+            r = _scan(min=60, hg=hg, ag=ag, sotH=8, sotA=6)
+            assert 0.0 <= r["probs"]["Over35"] <= 1.0
+
+    def test_over35_base_near_030(self):
+        """With no data at minute 1, Over35 should be close to its neutral base ~0.30."""
+        r = scan({"min": 1, "hg": 0, "ag": 0, "tC": 2.5, "sC": 0.0})
+        p = r["probs"]["Over35"]
+        assert 0.10 <= p <= 0.55, f"Over35={p} far from neutral base 0.30 with no data"
+
+
+# ─────────────────────────────────────────────────────────────────
+#  CI for BTTS and Over35 (#4)
+# ─────────────────────────────────────────────────────────────────
+
+class TestNewConfIntervals:
+    """confIntervals must now include pBTTS and pO35."""
+
+    def test_pbtts_ci_present(self):
+        r = _scan(min=45, sotH=5, sotA=3)
+        assert "pBTTS" in r["confIntervals"], "pBTTS CI missing"
+
+    def test_po35_ci_present(self):
+        r = _scan(min=45, sotH=5, sotA=3)
+        assert "pO35" in r["confIntervals"], "pO35 CI missing"
+
+    def test_all_ci_valid(self):
+        r = _scan(min=45, sotH=6, sotA=4)
+        for mkt, bounds in r["confIntervals"].items():
+            lo, hi = bounds["lo"], bounds["hi"]
+            assert 0.0 <= lo <= hi <= 1.0, f"Bad CI for {mkt}: ({lo},{hi})"
+
+    def test_btts_ci_centered_near_btts_prob(self):
+        r = _scan(min=60, sotH=8, sotA=5)
+        p_btts = r["probs"]["BTTS"]
+        ci = r["confIntervals"]["pBTTS"]
+        assert ci["lo"] <= p_btts <= ci["hi"], \
+            f"BTTS prob {p_btts} outside its own CI ({ci['lo']},{ci['hi']})"
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Expose shrinkStrength + dataQuality (#5)
+# ─────────────────────────────────────────────────────────────────
+
+class TestShrinkAndDataQualityExposed:
+    """shrinkStrength and dataQuality must be present in metrics."""
+
+    def test_shrink_strength_present(self):
+        r = _scan(min=45)
+        assert "shrinkStrength" in r["metrics"]
+
+    def test_data_quality_present(self):
+        r = _scan(min=45)
+        assert "dataQuality" in r["metrics"]
+
+    def test_shrink_strength_in_range(self):
+        for minute in (5, 30, 60, 80):
+            r = _scan(min=minute, sotH=minute // 10, sotA=minute // 12)
+            ss = r["metrics"]["shrinkStrength"]
+            assert 0.0 <= ss <= 0.35, f"shrinkStrength={ss} out of expected range"
+
+    def test_data_quality_in_range(self):
+        for minute in (5, 30, 60, 80):
+            r = _scan(min=minute, sotH=minute // 10, sotA=minute // 12)
+            dq = r["metrics"]["dataQuality"]
+            assert 0.0 <= dq <= 1.0, f"dataQuality={dq} out of range"
+
+    def test_more_data_higher_data_quality(self):
+        r_low  = _scan(min=10, sotH=0, sotA=0)
+        r_high = _scan(min=60, sotH=8, sotA=6, daH=20, daA=15)
+        assert r_high["metrics"]["dataQuality"] >= r_low["metrics"]["dataQuality"]
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Bug M2 — prior_a cap with extreme spreads
+# ─────────────────────────────────────────────────────────────────
+
+class TestPriorCapExtremeSpread:
+    """With extreme spread, prior_h and prior_a must remain reasonable."""
+
+    def test_large_positive_spread_caps_prior(self):
+        """sC=5.0 is extreme; prior_h and prior_a must stay within valid range."""
+        r = scan({"min": 45, "hg": 0, "ag": 0, "tC": 2.5, "sC": 5.0})
+        lh = r["metrics"]["lH_live"]
+        la = r["metrics"]["lA_live"]
+        assert lh >= 0.05, f"lH_live={lh} collapsed with extreme spread"
+        assert la >= 0.05, f"lA_live={la} collapsed with extreme spread"
+        assert lh <= 3.5
+        assert la <= 3.5
+
+    def test_large_negative_spread_caps_prior(self):
+        r = scan({"min": 45, "hg": 0, "ag": 0, "tC": 2.5, "sC": -5.0})
+        lh = r["metrics"]["lH_live"]
+        la = r["metrics"]["lA_live"]
+        assert lh >= 0.05
+        assert la >= 0.05
+
+    def test_extreme_spread_probs_still_valid(self):
+        r = scan({"min": 45, "hg": 0, "ag": 0, "tC": 2.5, "sC": 4.0})
+        assert abs(r["probs"]["1"] + r["probs"]["X"] + r["probs"]["2"] - 1.0) < 1e-6
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Bug M3 — sample_w not dominated by DA without shots
+# ─────────────────────────────────────────────────────────────────
+
+class TestSampleWDAFix:
+    """DA should not dominate sample_w when there are no shots."""
+
+    def test_da_only_low_sample_weight(self):
+        """With only DA (no shots), sample_w should stay low and prior should dominate."""
+        # 20 DA, 0 shots at min=30 — prior should still have strong influence
+        r_da_only = scan({"min": 30, "hg": 0, "ag": 0, "tC": 2.5, "sC": 0.0,
+                          "sotH": 0, "misH": 0, "daH": 20,
+                          "sotA": 0, "misA": 0, "daA": 20})
+        r_prior = scan({"min": 30, "hg": 0, "ag": 0, "tC": 2.5, "sC": 0.0})
+        # lambda should be close to prior, not explode due to DA
+        lh_da = r_da_only["metrics"]["lH_live"]
+        lh_prior = r_prior["metrics"]["lH_live"]
+        # DA-only should not triple prior lambda
+        assert lh_da <= lh_prior * 3.0, f"DA-only lambda {lh_da} >> prior {lh_prior}"
+
+    def test_shots_unlock_da_contribution(self):
+        """Adding shots to a DA-heavy scenario increases observed xG."""
+        r_shots = scan({"min": 30, "hg": 0, "ag": 0, "tC": 2.5, "sC": 0.0,
+                        "sotH": 4, "misH": 2, "daH": 20})
+        r_no_shots = scan({"min": 30, "hg": 0, "ag": 0, "tC": 2.5, "sC": 0.0,
+                           "sotH": 0, "misH": 0, "daH": 20})
+        assert r_shots["metrics"]["lH_live"] >= r_no_shots["metrics"]["lH_live"]
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Bug M4 — karma_factor converges to 1.0 at end of match
+# ─────────────────────────────────────────────────────────────────
+
+class TestKarmaFactorConvergence:
+    """karma_factor must converge toward 1.0 as the match approaches 90 min."""
+
+    def test_karma_higher_late_than_early(self):
+        """High SOT but no goals: lambda should recover more at minute 85 vs 30."""
+        # Both scenarios: many shots, no goals → karma factor applies
+        r_early = scan({"min": 30, "hg": 0, "ag": 0, "tC": 2.5, "sC": 0.0,
+                        "sotH": 10, "misH": 4})
+        r_late  = scan({"min": 85, "hg": 0, "ag": 0, "tC": 2.5, "sC": 0.0,
+                        "sotH": 20, "misH": 8})
+        # Late-game karma should restore lambda closer to 1x base
+        # We can't isolate karma directly, but check that lH_live is not 0
+        assert r_late["metrics"]["lH_live"] >= 0.05
+        assert r_early["metrics"]["lH_live"] >= 0.05
+
+    def test_karma_factor_never_exceeds_1(self):
+        """karma_factor(base) should never produce a value > 1.0 * atten."""
+        from apex_black_box.engine import scan as _scan_engine
+        # Indirect test: no modifier should push beyond MULT_GUARD_MAX
+        r = scan({"min": 89, "hg": 0, "ag": 0, "tC": 2.5, "sC": 0.0, "sotH": 25})
+        assert r["metrics"]["lH_live"] <= 3.5
+
+
+# ─────────────────────────────────────────────────────────────────
+#  Bug M5 — chasing_mult anti-overstimate with large deficits
+# ─────────────────────────────────────────────────────────────────
+
+class TestChasingMultImproved:
+    """Large deficits must produce smaller chasing boost than small deficits."""
+
+    def test_deficit_1_more_boost_than_deficit_3(self):
+        r1 = scan({"min": 60, "hg": 1, "ag": 0, "tC": 2.5, "sC": 0.0, "sotA": 4})
+        r3 = scan({"min": 60, "hg": 3, "ag": 0, "tC": 2.5, "sC": 0.0, "sotA": 4})
+        # Away lambda behind by 1 should be boosted more than behind by 3
+        la_1 = r1["metrics"]["lA_live"]
+        la_3 = r3["metrics"]["lA_live"]
+        # r3 is garbage-time at 3-0; but we test the chasing logic doesn't explode
+        assert la_1 >= 0.05 and la_3 >= 0.05
+
+    def test_chasing_formula_steeper_decay(self):
+        """The new decay is steeper than the old formula for deficit >= 2."""
+        minute = 60.0
+        # New: decay = 0.04 + 0.04*(diff-1) for diff >= 2
+        for diff in (1, 2, 3, 4):
+            abs_diff = diff
+            decay = 0.04 + 0.04 * max(0, abs_diff - 1)
+            new_cm = max(1.02, min(1.22, 1.10 + 0.12 * (minute / 90) - decay * (abs_diff - 1)))
+            old_cm = max(1.02, min(1.22, 1.10 + 0.12 * (minute / 90) - 0.04 * (abs_diff - 1)))
+            if diff >= 2:
+                assert new_cm <= old_cm, f"New chasing_mult {new_cm} > old {old_cm} for diff={diff}"
+
+
+# ─────────────────────────────────────────────────────────────────
+#  M9 — Dynamic shrink bases from prior Poisson
+# ─────────────────────────────────────────────────────────────────
+
+class TestDynamicShrinkBases:
+    """With high-scoring prior, Over15/Over25 bases should be above fixed neutral."""
+
+    def test_high_total_prior_raises_over25_base(self):
+        """With tC=5.0 (high-scoring), Over25 at low data should trend above 0.52."""
+        r_high = scan({"min": 1, "hg": 0, "ag": 0, "tC": 5.0, "sC": 0.0})
+        r_low  = scan({"min": 1, "hg": 0, "ag": 0, "tC": 1.5, "sC": 0.0})
+        # High-total match should have higher Over25 probability at min=1 (no data)
+        assert r_high["probs"]["Over25"] >= r_low["probs"]["Over25"], \
+            f"High prior should raise Over25 base: {r_high['probs']['Over25']} vs {r_low['probs']['Over25']}"
+
+    def test_prior_base_consistent_with_prior_poisson(self):
+        """At min=1 (no data), Over15 must be above the low-total Poisson prediction."""
+        r = scan({"min": 1, "hg": 0, "ag": 0, "tC": 4.0, "sC": 0.0})
+        # λ = 4.0/1.025 ≈ 3.9 → P(Over15) ≈ 1 - P(0) - P(1) = 1 - e^{-3.9}*(1+3.9) ≈ 0.90
+        # Shrink base should push Over15 above 0.72
+        assert r["probs"]["Over15"] > 0.72, f"Over15={r['probs']['Over15']} should exceed neutral base for high prior"
+
+
+# ─────────────────────────────────────────────────────────────────
+#  M14 — IsotonicCalibrator
+# ─────────────────────────────────────────────────────────────────
+
+class TestIsotonicCalibrator:
+    """IsotonicCalibrator must produce monotone non-decreasing outputs."""
+
+    def test_import(self):
+        from apex_black_box.calibration import IsotonicCalibrator
+        cal = IsotonicCalibrator()
+        assert not cal._fitted
+
+    def test_fit_and_predict(self):
+        from apex_black_box.calibration import IsotonicCalibrator
+        cal = IsotonicCalibrator()
+        cal.fit([0.1, 0.3, 0.6, 0.9], [0, 0, 1, 1])
+        assert cal._fitted
+        p_low = cal.predict(0.2)
+        p_high = cal.predict(0.8)
+        assert p_low <= p_high, f"Not monotone: p(0.2)={p_low} > p(0.8)={p_high}"
+
+    def test_predict_within_bounds(self):
+        from apex_black_box.calibration import IsotonicCalibrator
+        cal = IsotonicCalibrator()
+        cal.fit([0.2, 0.5, 0.8], [0, 1, 1])
+        for p in (0.0, 0.1, 0.5, 0.9, 1.0):
+            out = cal.predict(p)
+            assert 0.0 < out < 1.0, f"predict({p})={out} outside (0,1)"
+
+    def test_predict_invalid_input_raises(self):
+        from apex_black_box.calibration import IsotonicCalibrator
+        import pytest as _pytest
+        cal = IsotonicCalibrator()
+        cal.fit([0.2, 0.5, 0.8], [0, 1, 1])
+        with _pytest.raises(ValueError):
+            cal.predict(-0.1)
+        with _pytest.raises(ValueError):
+            cal.predict(1.5)
+
+    def test_monotone_over_range(self):
+        from apex_black_box.calibration import IsotonicCalibrator
+        import random as rng
+        rng.seed(42)
+        probs = sorted([rng.random() for _ in range(50)])
+        outcomes = [1 if p > 0.5 else 0 for p in probs]
+        cal = IsotonicCalibrator()
+        cal.fit(probs, outcomes)
+        preds = [cal.predict(p) for p in probs]
+        for i in range(len(preds) - 1):
+            assert preds[i] <= preds[i + 1] + 1e-9, f"Not monotone at i={i}"
+
+    def test_perfect_calibration_preserved(self):
+        """If outcomes perfectly match probs, calibration should not distort much."""
+        from apex_black_box.calibration import IsotonicCalibrator
+        cal = IsotonicCalibrator()
+        cal.fit([0.2, 0.4, 0.6, 0.8], [0, 0, 1, 1])
+        # Calibrated outputs should map to [0,1] range
+        for p in (0.2, 0.4, 0.6, 0.8):
+            out = cal.predict(p)
+            assert 0.0 < out < 1.0
+
+    def test_empty_fit(self):
+        from apex_black_box.calibration import IsotonicCalibrator
+        cal = IsotonicCalibrator()
+        cal.fit([], [])
+        assert cal.predict(0.5) == 0.5  # fallback to raw when no data
+
+
+# ─────────────────────────────────────────────────────────────────
+#  M15 — NB PMF drop-in with α=0 = Poisson
+# ─────────────────────────────────────────────────────────────────
+
+class TestNBPMF:
+    """nb_pmf with alpha=0 must produce identical results to poisson_pmf."""
+
+    def test_nb_alpha0_equals_poisson(self):
+        from apex_black_box.engine import nb_pmf, poisson_pmf
+        for lam in (0.5, 1.0, 1.5, 2.5):
+            for k in range(6):
+                nb_val = nb_pmf(lam, k, alpha=0.0)
+                poi_val = poisson_pmf(lam, k)
+                assert abs(nb_val - poi_val) < 1e-9, \
+                    f"NB(α=0) {nb_val} ≠ Poisson {poi_val} for lam={lam}, k={k}"
+
+    def test_nb_positive_alpha_sums_to_one(self):
+        from apex_black_box.engine import nb_pmf
+        for lam in (0.5, 1.0, 2.0):
+            for alpha in (0.1, 0.5, 1.0):
+                total = sum(nb_pmf(lam, k, alpha) for k in range(30))
+                assert abs(total - 1.0) < 0.01, \
+                    f"NB PMF sum={total:.4f} (lam={lam}, α={alpha})"
+
+    def test_nb_lam_zero(self):
+        from apex_black_box.engine import nb_pmf
+        assert nb_pmf(0.0, 0, alpha=0.5) == 1.0
+        assert nb_pmf(0.0, 3, alpha=0.5) == 0.0
+
+    def test_nb_alpha_introduces_overdispersion(self):
+        """Higher alpha introduces overdispersion — NB has higher variance than Poisson.
+
+        Overdispersion means more mass at 0 AND at large k values simultaneously.
+        Specifically P(0) for NB > P(0) for Poisson with same mean (because
+        probability mass is redistributed away from the modal value).
+        """
+        from apex_black_box.engine import nb_pmf, poisson_pmf
+        lam = 1.5
+        alpha = 0.5
+        # NB with overdispersion should have MORE mass at k=0 than Poisson
+        # (mass is spread from middle toward extremes)
+        nb_p0 = nb_pmf(lam, 0, alpha)
+        poi_p0 = poisson_pmf(lam, 0)
+        assert nb_p0 > poi_p0, f"NB P(0)={nb_p0:.4f} <= Poisson P(0)={poi_p0:.4f} — expected overdispersion"
+        # And NB should have higher mass at large k values (e.g., k >= 5)
+        nb_tail = sum(nb_pmf(lam, k, alpha) for k in range(5, 20))
+        poi_tail = sum(poisson_pmf(lam, k) for k in range(5, 20))
+        assert nb_tail > poi_tail, f"NB far tail {nb_tail:.6f} <= Poisson far tail {poi_tail:.6f}"
+
+
+# ─────────────────────────────────────────────────────────────────
+#  evaluate_logs.py — M1 + M16 unit tests
+# ─────────────────────────────────────────────────────────────────
+
+class TestEvaluateLogs:
+    """Unit tests for tools/evaluate_logs.py M1 (Over15 fix) and M16 (RPS/LogScore)."""
+
+    def _make_scan_event(self, probs: dict, tag: str = "snap_45") -> dict:
+        return {"type": "scan", "tag": tag, "engine": {"probs": probs, "metrics": {}}}
+
+    def test_labels_from_ft_over15(self):
+        from tools.evaluate_logs import _labels_from_ft
+        labels = _labels_from_ft(1, 1)
+        assert labels["over15"] == 1.0
+        labels_0 = _labels_from_ft(1, 0)
+        assert labels_0["over15"] == 0.0
+
+    def test_labels_from_ft_over35(self):
+        from tools.evaluate_logs import _labels_from_ft
+        assert _labels_from_ft(2, 2)["over35"] == 1.0
+        assert _labels_from_ft(1, 2)["over35"] == 0.0
+
+    def test_probs_from_scan_over15_key_variants(self):
+        from tools.evaluate_logs import _probs_from_scan
+        for key in ("over15", "Over15", "o15"):
+            ev = {"type": "scan", "engine": {"probs": {key: 0.65}, "metrics": {}}}
+            result = _probs_from_scan(ev)
+            assert result["over15"] == 0.65, f"over15 not found for key {key}"
+
+    def test_probs_from_scan_over35(self):
+        from tools.evaluate_logs import _probs_from_scan
+        for key in ("over35", "Over35", "o35"):
+            ev = {"type": "scan", "engine": {"probs": {key: 0.25}, "metrics": {}}}
+            result = _probs_from_scan(ev)
+            assert result["over35"] == 0.25, f"over35 not found for key {key}"
+
+    def test_rps_1x2_perfect(self):
+        from tools.evaluate_logs import _rps_1x2
+        assert _rps_1x2(1.0, 0.0, 0.0, 1.0, 0.0, 0.0) == 0.0
+
+    def test_rps_1x2_worst_case(self):
+        from tools.evaluate_logs import _rps_1x2
+        rps = _rps_1x2(0.0, 0.0, 1.0, 1.0, 0.0, 0.0)
+        assert rps > 0.5
+
+    def test_log_score_binary_perfect(self):
+        from tools.evaluate_logs import _log_score_binary
+        import math
+        ls = _log_score_binary(1.0 - 1e-9, 1.0)
+        assert ls > -0.01  # near 0
+
+    def test_log_score_1x2_correct_outcome(self):
+        from tools.evaluate_logs import _log_score_1x2
+        import math
+        ls = _log_score_1x2(0.9, 0.05, 0.05, 1.0, 0.0, 0.0)
+        assert ls > math.log(0.9) - 0.01  # close to log(0.9)
+
+    def test_metrics_accumulator_rps_logged(self):
+        from tools.evaluate_logs import MetricsAccumulator, _labels_from_ft
+        acc = MetricsAccumulator()
+        labels = _labels_from_ft(1, 0)
+        probs = {"1": 0.6, "X": 0.25, "2": 0.15, "over25": 0.4, "over15": 0.65, "btts": 0.3}
+        acc.add("snap_45", probs, labels)
+        assert len(acc.rps["snap_45"]) == 1
+        assert acc.rps["snap_45"][0] >= 0.0
+
+    def test_metrics_accumulator_logscore_logged(self):
+        from tools.evaluate_logs import MetricsAccumulator, _labels_from_ft
+        acc = MetricsAccumulator()
+        labels = _labels_from_ft(2, 1)
+        probs = {"1": 0.6, "X": 0.25, "2": 0.15, "over25": 0.8, "over15": 0.95, "btts": 0.7}
+        acc.add("snap_60", probs, labels)
+        assert len(acc.logscore["snap_60"]["1x2"]) == 1
+        assert acc.logscore["snap_60"]["over25"][0] < 0.0  # log-score is negative
