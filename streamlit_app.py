@@ -8,7 +8,9 @@ from the user's browser.
 """
 
 import shutil
+import sys
 import tempfile
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +23,7 @@ from apex_black_box.log_utils import (
     safe_match_id as _safe_match_id,
     append_jsonl as _append_jsonl,
     maybe_log_scan as _maybe_log_scan,
+    sanitize_payload as _sanitize_payload,
 )
 
 st.set_page_config(page_title="Apex Black Box v4.0", layout="wide")
@@ -74,16 +77,23 @@ if component_value and isinstance(component_value, dict):
                 match_name = str(payload.get("matchName", ""))
                 match_id = _safe_match_id(match_name)
                 if match_id and match_id != "unknown_match":
-                    _maybe_log_scan(match_id, match_name, payload, result)
+                    _maybe_log_scan(match_id, match_name, _sanitize_payload(payload), result)
                 st.session_state["_apex_py_result"] = {
                     "ok": True,
                     "data": result,
                     "reqId": req_id,
                 }
-            except Exception as exc:
+            except (ValueError, TypeError, KeyError, RuntimeError) as exc:
                 st.session_state["_apex_py_result"] = {
                     "ok": False,
                     "error": str(exc),
+                    "reqId": req_id,
+                }
+            except Exception as exc:
+                traceback.print_exc(file=sys.stderr)
+                st.session_state["_apex_py_result"] = {
+                    "ok": False,
+                    "error": f"Internal error: {type(exc).__name__}",
                     "reqId": req_id,
                 }
             st.session_state["_apex_last_req_id"] = req_id
